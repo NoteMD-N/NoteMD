@@ -1,0 +1,8 @@
+transformers @ git+https://github.com/huggingface/transformers.git@65dc261512cbdb1ee72b88ae5b222f2605aad8e5
+torch>=2.1.0
+torchaudio>=2.1.0
+soundfile
+librosa
+fastapi
+uvicorn[standard]
+python-multipart
