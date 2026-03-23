@@ -112,61 +112,112 @@ serve(async (req) => {
     }
 
     const userId = claimsData.claims.sub;
-    const { recording_id, audio_path } = await req.json();
+    const { recording_id, audio_path, transcript: preBuiltTranscript } = await req.json();
 
-    if (!recording_id || !audio_path) {
-      throw new Error("recording_id and audio_path are required");
+    if (!recording_id) {
+      throw new Error("recording_id is required");
     }
 
-    // Download audio from storage
-    const { data: audioData, error: downloadError } = await supabase.storage
-      .from("audio-recordings")
-      .download(audio_path);
-    if (downloadError) throw new Error(`Failed to download audio: ${downloadError.message}`);
+    let transcript: string;
 
-    // Update status to processing
-    await supabase
-      .from("recordings")
-      .update({ status: "processing" })
-      .eq("id", recording_id);
+    if (preBuiltTranscript) {
+      // Transcript was already built from chunked real-time transcription
+      transcript = preBuiltTranscript;
 
-    // Step 1: Transcribe with Google MedASR via Cloud Run service
-    const formData = new FormData();
-    formData.append("file", audioData, "audio.webm");
+      // Update status
+      await supabase
+        .from("recordings")
+        .update({ status: "transcribed" })
+        .eq("id", recording_id);
+    } else {
+      // Legacy path: download audio and transcribe in one go
+      if (!audio_path) {
+        throw new Error("audio_path is required when transcript is not provided");
+      }
 
-    // Build auth headers for Cloud Run
-    const medAsrHeaders: Record<string, string> = {};
-    if (GCP_SERVICE_ACCOUNT_KEY) {
-      // Use GCP identity token for Cloud Run IAM auth
-      const idToken = await getGcpIdentityToken(GCP_SERVICE_ACCOUNT_KEY, MEDASR_URL);
-      medAsrHeaders["Authorization"] = `Bearer ${idToken}`;
-    } else if (MEDASR_API_KEY) {
-      medAsrHeaders["Authorization"] = `Bearer ${MEDASR_API_KEY}`;
+      // Download audio from storage
+      const { data: audioData, error: downloadError } = await supabase.storage
+        .from("audio-recordings")
+        .download(audio_path);
+      if (downloadError) throw new Error(`Failed to download audio: ${downloadError.message}`);
+
+      // Update status to processing
+      await supabase
+        .from("recordings")
+        .update({ status: "processing" })
+        .eq("id", recording_id);
+
+      // Transcribe with Google MedASR via Cloud Run service
+      const formData = new FormData();
+      formData.append("file", audioData, "audio.webm");
+
+      // Build auth headers for Cloud Run
+      const medAsrHeaders: Record<string, string> = {};
+      if (GCP_SERVICE_ACCOUNT_KEY) {
+        const idToken = await getGcpIdentityToken(GCP_SERVICE_ACCOUNT_KEY, MEDASR_URL);
+        medAsrHeaders["Authorization"] = `Bearer ${idToken}`;
+      } else if (MEDASR_API_KEY) {
+        medAsrHeaders["Authorization"] = `Bearer ${MEDASR_API_KEY}`;
+      }
+
+      const medAsrResponse = await fetch(`${MEDASR_URL}/transcribe`, {
+        method: "POST",
+        headers: medAsrHeaders,
+        body: formData,
+      });
+
+      if (!medAsrResponse.ok) {
+        const errText = await medAsrResponse.text();
+        console.error("MedASR error:", errText);
+        await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
+        throw new Error(`Transcription failed: ${errText}`);
+      }
+
+      const medAsrResult = await medAsrResponse.json();
+      transcript = medAsrResult.text;
+
+      // Update recording status
+      await supabase
+        .from("recordings")
+        .update({ status: "transcribed" })
+        .eq("id", recording_id);
     }
 
-    const medAsrResponse = await fetch(`${MEDASR_URL}/transcribe`, {
-      method: "POST",
-      headers: medAsrHeaders,
-      body: formData,
-    });
+    // Step 2: Generate clinical letter (Claude preferred, GPT fallback)
+    const systemPrompt = `You are a professional UK clinical documentation assistant. Convert consultation transcripts into clinical letters using the exact template format below. Do not deviate from this structure.
 
-    if (!medAsrResponse.ok) {
-      const errText = await medAsrResponse.text();
-      console.error("MedASR error:", errText);
-      await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
-      throw new Error(`Transcription failed: ${errText}`);
-    }
+TEMPLATE FORMAT:
 
-    const medAsrResult = await medAsrResponse.json();
-    const transcript = medAsrResult.text;
+Diagnosis: [Insert diagnosis based on the transcript]
 
-    // Update recording status
-    await supabase
-      .from("recordings")
-      .update({ status: "transcribed" })
-      .eq("id", recording_id);
+Plan:
+• [Bullet point 1]
+• [Bullet point 2]
+• [Continue as needed]
 
-    // Step 2: Generate clinical letter with GPT
+________________________________________
+
+Dear Dr [GP Name],
+
+Thank you for referring this patient...
+
+[Write all the details of the history in this section as continuous narrative text. No bullet points. Include presenting complaint, relevant history, examination findings, and all clinical details discussed in the consultation.]
+
+[Insert clinical impression]: [Write the plan as a narrative here, incorporating what was discussed, agreed upon, and any follow-up arrangements. Write all the details of the discussion regarding management.]
+
+Dr [Doctor Name]
+
+RULES:
+- The top section (Diagnosis + Plan bullets) is a quick-reference summary
+- The letter body after the line must be flowing narrative text, no bullet points
+- Extract the GP name and doctor name from the transcript if mentioned, otherwise use placeholders
+- Do not fabricate clinical details. If information is unclear, note it appropriately
+- Use formal UK medical letter conventions
+- Be thorough and detailed — include ALL clinical information from the transcript
+- The letter should be comprehensive enough that the GP has a complete picture of the consultation`;
+
+    const userPrompt = `Please convert the following consultation transcript into a clinical letter using the template format:\n\n${transcript}`;
+
     const gptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -176,29 +227,11 @@ serve(async (req) => {
       body: JSON.stringify({
         model: "gpt-4o",
         messages: [
-          {
-            role: "system",
-            content: `You are a professional UK clinical documentation assistant. Convert consultation transcripts into professional clinical letters addressed to the referring GP.
-
-The letter MUST include the following sections:
-- Date and addressing (Dear Dr [GP Name])
-- Re: Patient details
-- History of Presenting Complaint
-- Examination Findings
-- Impression / Diagnosis
-- Management Plan
-- Follow-up arrangements
-- Yours sincerely, [Clinician Name]
-
-Use formal UK medical letter conventions. Be concise and professional. If information is unclear from the transcript, note it appropriately. Do not fabricate clinical details.`,
-          },
-          {
-            role: "user",
-            content: `Please convert the following consultation transcript into a professional UK clinical letter:\n\n${transcript}`,
-          },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
         ],
         temperature: 0.3,
-        max_tokens: 2000,
+        max_tokens: 4000,
       }),
     });
 
