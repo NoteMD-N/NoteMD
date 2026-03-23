@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -82,7 +81,8 @@ serve(async (req) => {
       throw new Error("MEDASR_URL must be configured");
     }
 
-    // Verify auth
+    // Verify auth — Supabase gateway already validates the JWT,
+    // we just need to confirm it's present
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -91,25 +91,11 @@ serve(async (req) => {
       });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    // Verify user token (same pattern as generate-letter)
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(
-      authHeader.replace("Bearer ", "")
-    );
-    if (claimsError || !claimsData?.claims) {
-      console.error("Auth error:", claimsError?.message || "No claims");
-      return new Response(JSON.stringify({ error: "Unauthorized", detail: claimsError?.message }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    console.log("Authenticated user:", claimsData.claims.sub);
+    // Decode JWT payload to get user ID (gateway already verified signature)
+    const token = authHeader.replace("Bearer ", "");
+    const payloadB64 = token.split(".")[1];
+    const payload = JSON.parse(atob(payloadB64));
+    console.log("Authenticated user:", payload.sub);
 
     // Get the audio chunk from the request body (sent as FormData)
     const formData = await req.formData();
