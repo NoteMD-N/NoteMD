@@ -6,33 +6,6 @@ import { toast } from "sonner";
 import { Mic, Square, ArrowLeft, Loader2, FileText, RotateCcw } from "lucide-react";
 import { Stethoscope } from "lucide-react";
 
-// Encode raw PCM Float32 samples into a WAV Blob at the given sample rate
-function encodeWav(samples: Float32Array, sampleRate: number): Blob {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  const writeStr = (offset: number, str: string) => {
-    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-  };
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-  return new Blob([buffer], { type: "audio/wav" });
-}
-
 const CHUNK_INTERVAL_MS = 30_000; // 30s chunks — MedASR GPU handles one at a time
 
 // Clean MedASR output — strip model artifacts
@@ -56,22 +29,23 @@ const Record = () => {
   const [hasStarted, setHasStarted] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
 
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  // Refs
   const streamRef = useRef<MediaStream | null>(null);
-  const samplesRef = useRef<Float32Array[]>([]);
-  const allSamplesRef = useRef<Float32Array[]>([]);
-  const sampleRateRef = useRef(48000); // Will be set to actual AudioContext sampleRate
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const allChunksRef = useRef<Blob[]>([]); // All recorded blobs for full upload
   const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
-  const pendingChunksRef = useRef(0);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const streamQueueRef = useRef<string[]>([]);
   const isStreamingRef = useRef(false);
+  const isRecordingRef = useRef(false);
 
-  // Streaming typewriter effect — drains queue of new text word by word
+  // Sequential chunk queue for MedASR
+  const sendQueueRef = useRef<Blob[]>([]);
+  const isSendingRef = useRef(false);
+
+  // Streaming typewriter effect
   const drainStreamQueue = useCallback(() => {
     if (isStreamingRef.current) return;
     if (streamQueueRef.current.length === 0) {
@@ -83,7 +57,7 @@ const Record = () => {
     setIsStreaming(true);
 
     const text = streamQueueRef.current.shift()!;
-    const words = text.split(/(\s+)/); // keep whitespace tokens
+    const words = text.split(/(\s+)/);
     let i = 0;
 
     const tick = () => {
@@ -93,14 +67,13 @@ const Record = () => {
         requestAnimationFrame(() => setTimeout(tick, 30 + Math.random() * 30));
       } else {
         isStreamingRef.current = false;
-        // Drain next queued chunk if any
         drainStreamQueue();
       }
     };
     tick();
   }, []);
 
-  // When fullTranscript grows, queue the new portion for streaming
+  // When fullTranscript grows, queue new portion for streaming
   const prevFullRef = useRef("");
   useEffect(() => {
     if (fullTranscript.length > prevFullRef.current.length) {
@@ -111,7 +84,6 @@ const Record = () => {
     }
   }, [fullTranscript, drainStreamQueue]);
 
-  // Auto-scroll transcript to bottom
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [displayedTranscript]);
@@ -121,9 +93,7 @@ const Record = () => {
       if ("wakeLock" in navigator) {
         wakeLockRef.current = await navigator.wakeLock.request("screen");
       }
-    } catch {
-      // non-critical
-    }
+    } catch { /* non-critical */ }
   }, []);
 
   const releaseWakeLock = useCallback(() => {
@@ -131,28 +101,23 @@ const Record = () => {
     wakeLockRef.current = null;
   }, []);
 
-  // Sequential chunk queue — MedASR GPU can only handle one request at a time
-  const chunkQueueRef = useRef<Blob[]>([]);
-  const isSendingRef = useRef(false);
-
-  const processNextChunk = useCallback(async () => {
-    if (isSendingRef.current || chunkQueueRef.current.length === 0) return;
+  // Send one blob to MedASR sequentially
+  const processNextInQueue = useCallback(async () => {
+    if (isSendingRef.current || sendQueueRef.current.length === 0) return;
 
     isSendingRef.current = true;
     setTranscribing(true);
-    const wavBlob = chunkQueueRef.current.shift()!;
+    const blob = sendQueueRef.current.shift()!;
 
     try {
       const formData = new FormData();
-      formData.append("audio", wavBlob, "chunk.wav");
+      formData.append("audio", blob, "chunk.webm");
 
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-chunk`,
         {
           method: "POST",
-          headers: {
-            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          },
+          headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY },
           body: formData,
         }
       );
@@ -174,74 +139,95 @@ const Record = () => {
       console.error("Failed to transcribe chunk:", err);
     } finally {
       isSendingRef.current = false;
-      if (chunkQueueRef.current.length > 0) {
-        // Process next queued chunk
-        processNextChunk();
+      if (sendQueueRef.current.length > 0) {
+        processNextInQueue();
       } else {
         setTranscribing(false);
       }
     }
   }, []);
 
-  const queueChunk = useCallback((samples: Float32Array[]) => {
-    if (samples.length === 0) return;
+  // Create a MediaRecorder, collect data, and return blob on stop
+  const createRecorderSegment = useCallback((stream: MediaStream): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const chunks: Blob[] = [];
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType });
 
-    const totalLength = samples.reduce((sum, s) => sum + s.length, 0);
-    const merged = new Float32Array(totalLength);
-    let offset = 0;
-    for (const s of samples) {
-      merged.set(s, offset);
-      offset += s.length;
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+          allChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: mimeType });
+        resolve(blob);
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start(1000); // Collect data every second
+    });
+  }, []);
+
+  // Cycle: stop current recorder → send blob → start new recorder
+  const cycleRecorder = useCallback(async () => {
+    if (!isRecordingRef.current || !streamRef.current) return;
+
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== "recording") return;
+
+    // Stop current segment — promise resolves with the blob
+    const blobPromise = new Promise<Blob>((resolve) => {
+      const chunks: Blob[] = [];
+      const origHandler = recorder.ondataavailable;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+          allChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType });
+        resolve(blob);
+      };
+
+      recorder.stop();
+    });
+
+    const blob = await blobPromise;
+    console.log("Chunk recorded:", blob.size, "bytes");
+
+    // Queue for transcription
+    sendQueueRef.current.push(blob);
+    processNextInQueue();
+
+    // Start new segment if still recording
+    if (isRecordingRef.current && streamRef.current) {
+      createRecorderSegment(streamRef.current);
     }
-
-    if (merged.length === 0) return;
-
-    const wavBlob = encodeWav(merged, sampleRateRef.current);
-    chunkQueueRef.current.push(wavBlob);
-    pendingChunksRef.current = chunkQueueRef.current.length;
-    processNextChunk();
-  }, [processNextChunk]);
+  }, [processNextInQueue, createRecorderSegment]);
 
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      // Use native sample rate — MedASR will resample to 16kHz server-side
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-      sampleRateRef.current = audioContext.sampleRate;
-      console.log("AudioContext sampleRate:", audioContext.sampleRate);
+      // Clear state
+      allChunksRef.current = [];
+      sendQueueRef.current = [];
+      isSendingRef.current = false;
 
-      const source = audioContext.createMediaStreamSource(stream);
-      sourceRef.current = source;
-
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-
-      samplesRef.current = [];
-      allSamplesRef.current = [];
-
-      processor.onaudioprocess = (e) => {
-        const input = e.inputBuffer.getChannelData(0);
-        const copy = new Float32Array(input);
-        samplesRef.current.push(copy);
-        allSamplesRef.current.push(copy);
-      };
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-
-      // Clear any existing timers first
       if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
 
-      chunkTimerRef.current = setInterval(() => {
-        const chunk = samplesRef.current.splice(0);
-        queueChunk(chunk);
-      }, CHUNK_INTERVAL_MS);
-
       setIsRecording(true);
+      isRecordingRef.current = true;
       setHasStarted(true);
       setElapsed(0);
       setFullTranscript("");
@@ -251,6 +237,15 @@ const Record = () => {
       isStreamingRef.current = false;
       setChunksProcessed(0);
 
+      // Start first recording segment
+      createRecorderSegment(stream);
+
+      // Cycle recorder every 30s to send chunks
+      chunkTimerRef.current = setInterval(() => {
+        cycleRecorder();
+      }, CHUNK_INTERVAL_MS);
+
+      // Timer
       const startTime = Date.now();
       timerRef.current = setInterval(() => {
         setElapsed(Math.floor((Date.now() - startTime) / 1000));
@@ -260,26 +255,39 @@ const Record = () => {
     } catch {
       toast.error("Microphone access denied");
     }
-  }, [queueChunk, requestWakeLock]);
+  }, [createRecorderSegment, cycleRecorder, requestWakeLock]);
 
   const stopRecording = useCallback(() => {
     setIsRecording(false);
-
-    processorRef.current?.disconnect();
-    sourceRef.current?.disconnect();
-    audioContextRef.current?.close();
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    isRecordingRef.current = false;
 
     if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
 
-    const remaining = samplesRef.current.splice(0);
-    if (remaining.length > 0) {
-      queueChunk(remaining);
+    // Stop current recorder and send final chunk
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state === "recording") {
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+          allChunksRef.current.push(e.data);
+        }
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType });
+        if (blob.size > 0) {
+          console.log("Final chunk:", blob.size, "bytes");
+          sendQueueRef.current.push(blob);
+          processNextInQueue();
+        }
+      };
+      recorder.stop();
     }
 
+    streamRef.current?.getTracks().forEach((t) => t.stop());
     releaseWakeLock();
-  }, [queueChunk, releaseWakeLock]);
+  }, [processNextInQueue, releaseWakeLock]);
 
   useEffect(() => {
     return () => {
@@ -300,18 +308,12 @@ const Record = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      const totalLength = allSamplesRef.current.reduce((sum, s) => sum + s.length, 0);
-      const merged = new Float32Array(totalLength);
-      let offset = 0;
-      for (const s of allSamplesRef.current) {
-        merged.set(s, offset);
-        offset += s.length;
-      }
-      const fullWav = encodeWav(merged, sampleRateRef.current);
-      const fileName = `${user.id}/${Date.now()}.wav`;
+      // Upload full recording as webm
+      const fullBlob = new Blob(allChunksRef.current, { type: "audio/webm" });
+      const fileName = `${user.id}/${Date.now()}.webm`;
       const { error: uploadError } = await supabase.storage
         .from("audio-recordings")
-        .upload(fileName, fullWav);
+        .upload(fileName, fullBlob);
       if (uploadError) throw uploadError;
 
       const { data: recording, error: recError } = await supabase
@@ -349,8 +351,7 @@ const Record = () => {
     setElapsed(0);
     setChunksProcessed(0);
     setHasStarted(false);
-    allSamplesRef.current = [];
-    samplesRef.current = [];
+    allChunksRef.current = [];
   };
 
   const formatTime = (s: number) =>
@@ -537,7 +538,7 @@ const Record = () => {
                     <div>
                       <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Waiting for first chunk...</p>
                       <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                        Audio is sent every 15 seconds — first transcript will appear shortly
+                        Audio is sent every 30 seconds — first transcript will appear shortly
                       </p>
                     </div>
                   </div>
