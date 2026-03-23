@@ -3,8 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Mic, Square, ArrowLeft, Loader2, FileText, RotateCcw } from "lucide-react";
-import { Stethoscope } from "lucide-react";
+import { Mic, Square, Loader2, FileText, RotateCcw } from "lucide-react";
 
 const CHUNK_INTERVAL_MS = 30_000; // 30s chunks — MedASR GPU handles one at a time
 
@@ -322,35 +321,8 @@ const Record = () => {
   const hasStopped = !isRecording && hasStarted;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
-      {/* Header */}
-      <header className="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm sticky top-0 z-10">
-        <div className="container flex h-14 items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/dashboard")} className="text-slate-500 hover:text-slate-700">
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Dashboard
-          </Button>
-          <div className="h-4 w-px bg-slate-200 dark:bg-slate-700" />
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
-              <Stethoscope className="h-4 w-4 text-primary-foreground" />
-            </div>
-            <h1 className="font-semibold text-sm text-slate-900 dark:text-slate-100">New Recording</h1>
-          </div>
-          {isRecording && (
-            <div className="ml-auto flex items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
-              </span>
-              <span className="text-xs font-medium text-red-600 dark:text-red-400">Recording</span>
-            </div>
-          )}
-        </div>
-      </header>
-
-      {/* Main content */}
-      <main className="container py-8">
+    <div className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 min-h-full">
+      <div className="p-6">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-6xl mx-auto">
 
           {/* Left panel — Recording controls */}
@@ -529,7 +501,7 @@ const Record = () => {
             </div>
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 };

@@ -5,10 +5,15 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import AppLayout from "@/components/AppLayout";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import Record from "./pages/Record";
 import LetterView from "./pages/LetterView";
+import Recordings from "./pages/Recordings";
+import Letters from "./pages/Letters";
+import Settings from "./pages/Settings";
+import Billing from "./pages/Billing";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,9 +35,21 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/auth" element={<AuthRedirect />} />
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/record" element={<ProtectedRoute><Record /></ProtectedRoute>} />
-            <Route path="/letter/:id" element={<ProtectedRoute><LetterView /></ProtectedRoute>} />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <AppLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/recordings" element={<Recordings />} />
+              <Route path="/letters" element={<Letters />} />
+              <Route path="/record" element={<Record />} />
+              <Route path="/letter/:id" element={<LetterView />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/settings/billing" element={<Billing />} />
+            </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

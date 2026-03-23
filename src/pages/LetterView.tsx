@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { ArrowLeft, Save, Stethoscope, FileText, Copy } from "lucide-react";
+import { Save, FileText, Copy } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Letter = Tables<"letters">;
@@ -68,24 +68,15 @@ const LetterView = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="container flex h-16 items-center justify-between">
+    <div className="bg-background min-h-full">
+      <div className="max-w-3xl mx-auto p-6 space-y-6">
+        {/* Action bar */}
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => navigate("/dashboard")}>
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg gradient-primary">
-                <Stethoscope className="h-5 w-5 text-primary-foreground" />
-              </div>
-              <h1 className="font-heading text-xl font-bold text-foreground">Letter</h1>
-            </div>
+            <h2 className="font-heading text-xl font-bold text-foreground">Letter</h2>
+            <Badge variant="secondary">{letter?.status}</Badge>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant="secondary">
-              {letter?.status}
-            </Badge>
             <Button onClick={handleCopy} variant="outline" size="sm" className="gap-2">
               <Copy className="h-4 w-4" />
               Copy
@@ -96,9 +87,6 @@ const LetterView = () => {
             </Button>
           </div>
         </div>
-      </header>
-
-      <main className="container max-w-3xl py-8 space-y-6">
         {/* Transcript */}
         {letter?.transcript && (
           <Card className="shadow-card">
@@ -131,7 +119,7 @@ const LetterView = () => {
             />
           </CardContent>
         </Card>
-      </main>
+      </div>
     </div>
   );
 };
