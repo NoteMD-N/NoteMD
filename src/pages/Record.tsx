@@ -147,71 +147,22 @@ const Record = () => {
     }
   }, []);
 
-  // Create a MediaRecorder, collect data, and return blob on stop
-  const createRecorderSegment = useCallback((stream: MediaStream): Promise<Blob> => {
-    return new Promise((resolve) => {
-      const chunks: Blob[] = [];
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : "audio/webm";
-      const recorder = new MediaRecorder(stream, { mimeType });
+  // Accumulate chunks from MediaRecorder, flush every 30s
+  const pendingDataRef = useRef<Blob[]>([]);
+  const mimeTypeRef = useRef("audio/webm");
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunks.push(e.data);
-          allChunksRef.current.push(e.data);
-        }
-      };
+  const flushChunk = useCallback(() => {
+    if (pendingDataRef.current.length === 0) return;
 
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: mimeType });
-        resolve(blob);
-      };
+    const blob = new Blob(pendingDataRef.current, { type: mimeTypeRef.current });
+    pendingDataRef.current = [];
+    console.log("Flushing chunk:", blob.size, "bytes");
 
-      mediaRecorderRef.current = recorder;
-      recorder.start(1000); // Collect data every second
-    });
-  }, []);
+    if (blob.size < 1000) return; // Skip tiny blobs
 
-  // Cycle: stop current recorder → send blob → start new recorder
-  const cycleRecorder = useCallback(async () => {
-    if (!isRecordingRef.current || !streamRef.current) return;
-
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state !== "recording") return;
-
-    // Stop current segment — promise resolves with the blob
-    const blobPromise = new Promise<Blob>((resolve) => {
-      const chunks: Blob[] = [];
-      const origHandler = recorder.ondataavailable;
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunks.push(e.data);
-          allChunksRef.current.push(e.data);
-        }
-      };
-
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: recorder.mimeType });
-        resolve(blob);
-      };
-
-      recorder.stop();
-    });
-
-    const blob = await blobPromise;
-    console.log("Chunk recorded:", blob.size, "bytes");
-
-    // Queue for transcription
     sendQueueRef.current.push(blob);
     processNextInQueue();
-
-    // Start new segment if still recording
-    if (isRecordingRef.current && streamRef.current) {
-      createRecorderSegment(streamRef.current);
-    }
-  }, [processNextInQueue, createRecorderSegment]);
+  }, [processNextInQueue]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -220,6 +171,7 @@ const Record = () => {
 
       // Clear state
       allChunksRef.current = [];
+      pendingDataRef.current = [];
       sendQueueRef.current = [];
       isSendingRef.current = false;
 
@@ -237,12 +189,28 @@ const Record = () => {
       isStreamingRef.current = false;
       setChunksProcessed(0);
 
-      // Start first recording segment
-      createRecorderSegment(stream);
+      // Create single continuous MediaRecorder
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      mimeTypeRef.current = mimeType;
 
-      // Cycle recorder every 30s to send chunks
+      const recorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          pendingDataRef.current.push(e.data);
+          allChunksRef.current.push(e.data);
+        }
+      };
+
+      // Use timeslice to get data every second
+      recorder.start(1000);
+
+      // Every 30s, flush accumulated data and send to MedASR
       chunkTimerRef.current = setInterval(() => {
-        cycleRecorder();
+        flushChunk();
       }, CHUNK_INTERVAL_MS);
 
       // Timer
@@ -255,7 +223,7 @@ const Record = () => {
     } catch {
       toast.error("Microphone access denied");
     }
-  }, [createRecorderSegment, cycleRecorder, requestWakeLock]);
+  }, [flushChunk, requestWakeLock]);
 
   const stopRecording = useCallback(() => {
     setIsRecording(false);
@@ -264,30 +232,19 @@ const Record = () => {
     if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
 
-    // Stop current recorder and send final chunk
+    // Stop recorder — this fires one final ondataavailable
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state === "recording") {
-      const chunks: Blob[] = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunks.push(e.data);
-          allChunksRef.current.push(e.data);
-        }
-      };
       recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: recorder.mimeType });
-        if (blob.size > 0) {
-          console.log("Final chunk:", blob.size, "bytes");
-          sendQueueRef.current.push(blob);
-          processNextInQueue();
-        }
+        // Flush any remaining accumulated data
+        flushChunk();
       };
       recorder.stop();
     }
 
     streamRef.current?.getTracks().forEach((t) => t.stop());
     releaseWakeLock();
-  }, [processNextInQueue, releaseWakeLock]);
+  }, [flushChunk, releaseWakeLock]);
 
   useEffect(() => {
     return () => {
