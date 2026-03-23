@@ -33,7 +33,7 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-const CHUNK_INTERVAL_MS = 15_000;
+const CHUNK_INTERVAL_MS = 30_000; // 30s chunks — MedASR GPU handles one at a time
 const TARGET_SAMPLE_RATE = 16_000;
 
 const Record = () => {
@@ -122,23 +122,16 @@ const Record = () => {
     wakeLockRef.current = null;
   }, []);
 
-  const sendChunk = useCallback(async (samples: Float32Array[]) => {
-    if (samples.length === 0) return;
+  // Sequential chunk queue — MedASR GPU can only handle one request at a time
+  const chunkQueueRef = useRef<Blob[]>([]);
+  const isSendingRef = useRef(false);
 
-    const totalLength = samples.reduce((sum, s) => sum + s.length, 0);
-    const merged = new Float32Array(totalLength);
-    let offset = 0;
-    for (const s of samples) {
-      merged.set(s, offset);
-      offset += s.length;
-    }
+  const processNextChunk = useCallback(async () => {
+    if (isSendingRef.current || chunkQueueRef.current.length === 0) return;
 
-    if (merged.length === 0) return;
-
-    const wavBlob = encodeWav(merged, TARGET_SAMPLE_RATE);
-
-    pendingChunksRef.current++;
+    isSendingRef.current = true;
     setTranscribing(true);
+    const wavBlob = chunkQueueRef.current.shift()!;
 
     try {
       const formData = new FormData();
@@ -160,23 +153,44 @@ const Record = () => {
       if (!response.ok) {
         console.error("Chunk error:", response.status, responseText);
         toast.error(`Chunk failed (${response.status}): ${responseText.slice(0, 100)}`);
-        return;
-      }
-
-      const result = JSON.parse(responseText);
-      if (result.text && result.text.trim()) {
-        setFullTranscript((prev) => (prev ? prev + " " + result.text.trim() : result.text.trim()));
-        setChunksProcessed((c) => c + 1);
+      } else {
+        const result = JSON.parse(responseText);
+        if (result.text && result.text.trim()) {
+          setFullTranscript((prev) => (prev ? prev + " " + result.text.trim() : result.text.trim()));
+          setChunksProcessed((c) => c + 1);
+        }
       }
     } catch (err) {
       console.error("Failed to transcribe chunk:", err);
     } finally {
-      pendingChunksRef.current--;
-      if (pendingChunksRef.current === 0) {
+      isSendingRef.current = false;
+      if (chunkQueueRef.current.length > 0) {
+        // Process next queued chunk
+        processNextChunk();
+      } else {
         setTranscribing(false);
       }
     }
   }, []);
+
+  const queueChunk = useCallback((samples: Float32Array[]) => {
+    if (samples.length === 0) return;
+
+    const totalLength = samples.reduce((sum, s) => sum + s.length, 0);
+    const merged = new Float32Array(totalLength);
+    let offset = 0;
+    for (const s of samples) {
+      merged.set(s, offset);
+      offset += s.length;
+    }
+
+    if (merged.length === 0) return;
+
+    const wavBlob = encodeWav(merged, TARGET_SAMPLE_RATE);
+    chunkQueueRef.current.push(wavBlob);
+    pendingChunksRef.current = chunkQueueRef.current.length;
+    processNextChunk();
+  }, [processNextChunk]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -211,7 +225,7 @@ const Record = () => {
 
       chunkTimerRef.current = setInterval(() => {
         const chunk = samplesRef.current.splice(0);
-        sendChunk(chunk);
+        queueChunk(chunk);
       }, CHUNK_INTERVAL_MS);
 
       setIsRecording(true);
@@ -233,7 +247,7 @@ const Record = () => {
     } catch {
       toast.error("Microphone access denied");
     }
-  }, [sendChunk, requestWakeLock]);
+  }, [queueChunk, requestWakeLock]);
 
   const stopRecording = useCallback(() => {
     setIsRecording(false);
@@ -248,11 +262,11 @@ const Record = () => {
 
     const remaining = samplesRef.current.splice(0);
     if (remaining.length > 0) {
-      sendChunk(remaining);
+      queueChunk(remaining);
     }
 
     releaseWakeLock();
-  }, [sendChunk, releaseWakeLock]);
+  }, [queueChunk, releaseWakeLock]);
 
   useEffect(() => {
     return () => {
