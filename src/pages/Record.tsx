@@ -148,6 +148,9 @@ const Record = () => {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-chunk`,
         {
           method: "POST",
+          headers: {
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
           body: formData,
         }
       );

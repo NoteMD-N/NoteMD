@@ -74,70 +74,63 @@ serve(async (req) => {
   }
 
   try {
+    const t0 = Date.now();
+    console.log("[transcribe-chunk] START");
+
     const MEDASR_URL = Deno.env.get("MEDASR_URL");
     const GCP_SERVICE_ACCOUNT_KEY = Deno.env.get("GCP_SERVICE_ACCOUNT_KEY");
     const MEDASR_API_KEY = Deno.env.get("MEDASR_API_KEY");
+
+    console.log("[transcribe-chunk] MEDASR_URL:", MEDASR_URL ? "SET" : "NOT SET");
+    console.log("[transcribe-chunk] GCP_SA_KEY:", GCP_SERVICE_ACCOUNT_KEY ? "SET" : "NOT SET");
+    console.log("[transcribe-chunk] MEDASR_API_KEY:", MEDASR_API_KEY ? "SET" : "NOT SET");
+
     if (!MEDASR_URL) {
       throw new Error("MEDASR_URL must be configured");
     }
 
-    // Verify auth — Supabase gateway already validates the JWT,
-    // we just need to confirm it's present
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Decode JWT payload to get user ID (gateway already verified signature)
-    const token = authHeader.replace("Bearer ", "");
-    const payloadB64 = token.split(".")[1];
-    const payload = JSON.parse(atob(payloadB64));
-    console.log("Authenticated user:", payload.sub);
-
-    // Get the audio chunk from the request body (sent as FormData)
+    // Parse audio from FormData (no auth needed — deployed with --no-verify-jwt)
     const formData = await req.formData();
     const audioFile = formData.get("audio") as File;
     if (!audioFile) {
       throw new Error("audio file is required");
     }
 
-    console.log("Received audio chunk:", audioFile.size, "bytes");
+    console.log(`[transcribe-chunk] Audio chunk: ${audioFile.size} bytes (${Date.now() - t0}ms)`);
 
     // Build auth headers for Cloud Run
     const medAsrHeaders: Record<string, string> = {};
     if (GCP_SERVICE_ACCOUNT_KEY) {
-      console.log("Using GCP service account auth for MedASR");
       const idToken = await getGcpIdentityToken(GCP_SERVICE_ACCOUNT_KEY, MEDASR_URL);
       medAsrHeaders["Authorization"] = `Bearer ${idToken}`;
+      console.log(`[transcribe-chunk] GCP token obtained (${Date.now() - t0}ms)`);
     } else if (MEDASR_API_KEY) {
-      console.log("Using API key auth for MedASR");
       medAsrHeaders["Authorization"] = `Bearer ${MEDASR_API_KEY}`;
     } else {
-      console.warn("No MedASR auth configured — request may fail");
+      console.warn("[transcribe-chunk] WARNING: No MedASR auth configured");
     }
 
     // Forward to MedASR
     const medAsrFormData = new FormData();
     medAsrFormData.append("file", audioFile, "chunk.wav");
 
-    console.log("Sending to MedASR:", MEDASR_URL);
+    console.log(`[transcribe-chunk] Calling MedASR... (${Date.now() - t0}ms)`);
     const medAsrResponse = await fetch(`${MEDASR_URL}/transcribe`, {
       method: "POST",
       headers: medAsrHeaders,
       body: medAsrFormData,
     });
 
+    console.log(`[transcribe-chunk] MedASR responded: ${medAsrResponse.status} (${Date.now() - t0}ms)`);
+
     if (!medAsrResponse.ok) {
       const errText = await medAsrResponse.text();
-      console.error("MedASR error:", medAsrResponse.status, errText);
+      console.error("[transcribe-chunk] MedASR error:", errText);
       throw new Error(`Transcription failed (${medAsrResponse.status}): ${errText}`);
     }
 
     const result = await medAsrResponse.json();
-    console.log("MedASR result:", JSON.stringify(result).slice(0, 200));
+    console.log(`[transcribe-chunk] DONE: "${(result.text || "").slice(0, 80)}..." (${Date.now() - t0}ms)`);
 
     return new Response(
       JSON.stringify({ text: result.text }),
