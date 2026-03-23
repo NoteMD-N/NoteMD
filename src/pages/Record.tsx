@@ -34,7 +34,15 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
 }
 
 const CHUNK_INTERVAL_MS = 30_000; // 30s chunks — MedASR GPU handles one at a time
-const TARGET_SAMPLE_RATE = 16_000;
+
+// Clean MedASR output — strip model artifacts
+function cleanTranscript(text: string): string {
+  return text
+    .replace(/<\/s>/g, "")
+    .replace(/undefined/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 const Record = () => {
   const navigate = useNavigate();
@@ -54,6 +62,7 @@ const Record = () => {
   const streamRef = useRef<MediaStream | null>(null);
   const samplesRef = useRef<Float32Array[]>([]);
   const allSamplesRef = useRef<Float32Array[]>([]);
+  const sampleRateRef = useRef(48000); // Will be set to actual AudioContext sampleRate
   const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -155,8 +164,9 @@ const Record = () => {
         toast.error(`Chunk failed (${response.status}): ${responseText.slice(0, 100)}`);
       } else {
         const result = JSON.parse(responseText);
-        if (result.text && result.text.trim()) {
-          setFullTranscript((prev) => (prev ? prev + " " + result.text.trim() : result.text.trim()));
+        const cleaned = cleanTranscript(result.text || "");
+        if (cleaned) {
+          setFullTranscript((prev) => (prev ? prev + " " + cleaned : cleaned));
           setChunksProcessed((c) => c + 1);
         }
       }
@@ -186,7 +196,7 @@ const Record = () => {
 
     if (merged.length === 0) return;
 
-    const wavBlob = encodeWav(merged, TARGET_SAMPLE_RATE);
+    const wavBlob = encodeWav(merged, sampleRateRef.current);
     chunkQueueRef.current.push(wavBlob);
     pendingChunksRef.current = chunkQueueRef.current.length;
     processNextChunk();
@@ -197,8 +207,11 @@ const Record = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+      // Use native sample rate — MedASR will resample to 16kHz server-side
+      const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
+      sampleRateRef.current = audioContext.sampleRate;
+      console.log("AudioContext sampleRate:", audioContext.sampleRate);
 
       const source = audioContext.createMediaStreamSource(stream);
       sourceRef.current = source;
@@ -294,7 +307,7 @@ const Record = () => {
         merged.set(s, offset);
         offset += s.length;
       }
-      const fullWav = encodeWav(merged, TARGET_SAMPLE_RATE);
+      const fullWav = encodeWav(merged, sampleRateRef.current);
       const fileName = `${user.id}/${Date.now()}.wav`;
       const { error: uploadError } = await supabase.storage
         .from("audio-recordings")
