@@ -144,21 +144,10 @@ const Record = () => {
       const formData = new FormData();
       formData.append("audio", wavBlob, "chunk.wav");
 
-      // Get fresh session token
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        console.error("No session");
-        return;
-      }
-
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-chunk`,
         {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          },
           body: formData,
         }
       );
@@ -213,6 +202,10 @@ const Record = () => {
       source.connect(processor);
       processor.connect(audioContext.destination);
 
+      // Clear any existing timers first
+      if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+
       chunkTimerRef.current = setInterval(() => {
         const chunk = samplesRef.current.splice(0);
         sendChunk(chunk);
@@ -227,7 +220,11 @@ const Record = () => {
       streamQueueRef.current = [];
       isStreamingRef.current = false;
       setChunksProcessed(0);
-      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+
+      const startTime = Date.now();
+      timerRef.current = setInterval(() => {
+        setElapsed(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
 
       await requestWakeLock();
     } catch {
