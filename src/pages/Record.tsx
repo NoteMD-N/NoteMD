@@ -162,9 +162,13 @@ const Record = () => {
       );
 
       if (!response.ok) {
-        const errText = await response.text();
-        console.error("Chunk transcription error:", response.status, errText);
-        toast.error("Transcription chunk failed — check console");
+        let errDetail = `${response.status}`;
+        try {
+          const errText = await response.text();
+          errDetail += `: ${errText}`;
+        } catch { /* ignore */ }
+        console.error("Chunk transcription error:", errDetail);
+        toast.error(`Chunk failed: ${errDetail}`);
         return;
       }
 

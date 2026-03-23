@@ -97,14 +97,19 @@ serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      console.error("Auth error:", userError?.message || "No user");
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+    // Verify user token (same pattern as generate-letter)
+    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(
+      authHeader.replace("Bearer ", "")
+    );
+    if (claimsError || !claimsData?.claims) {
+      console.error("Auth error:", claimsError?.message || "No claims");
+      return new Response(JSON.stringify({ error: "Unauthorized", detail: claimsError?.message }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    console.log("Authenticated user:", claimsData.claims.sub);
 
     // Get the audio chunk from the request body (sent as FormData)
     const formData = await req.formData();
@@ -113,19 +118,26 @@ serve(async (req) => {
       throw new Error("audio file is required");
     }
 
+    console.log("Received audio chunk:", audioFile.size, "bytes");
+
     // Build auth headers for Cloud Run
     const medAsrHeaders: Record<string, string> = {};
     if (GCP_SERVICE_ACCOUNT_KEY) {
+      console.log("Using GCP service account auth for MedASR");
       const idToken = await getGcpIdentityToken(GCP_SERVICE_ACCOUNT_KEY, MEDASR_URL);
       medAsrHeaders["Authorization"] = `Bearer ${idToken}`;
     } else if (MEDASR_API_KEY) {
+      console.log("Using API key auth for MedASR");
       medAsrHeaders["Authorization"] = `Bearer ${MEDASR_API_KEY}`;
+    } else {
+      console.warn("No MedASR auth configured — request may fail");
     }
 
     // Forward to MedASR
     const medAsrFormData = new FormData();
     medAsrFormData.append("file", audioFile, "chunk.wav");
 
+    console.log("Sending to MedASR:", MEDASR_URL);
     const medAsrResponse = await fetch(`${MEDASR_URL}/transcribe`, {
       method: "POST",
       headers: medAsrHeaders,
@@ -134,11 +146,12 @@ serve(async (req) => {
 
     if (!medAsrResponse.ok) {
       const errText = await medAsrResponse.text();
-      console.error("MedASR chunk error:", errText);
-      throw new Error(`Transcription failed: ${errText}`);
+      console.error("MedASR error:", medAsrResponse.status, errText);
+      throw new Error(`Transcription failed (${medAsrResponse.status}): ${errText}`);
     }
 
     const result = await medAsrResponse.json();
+    console.log("MedASR result:", JSON.stringify(result).slice(0, 200));
 
     return new Response(
       JSON.stringify({ text: result.text }),
