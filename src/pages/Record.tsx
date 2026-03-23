@@ -41,10 +41,12 @@ const Record = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [transcript, setTranscript] = useState("");
+  const [displayedTranscript, setDisplayedTranscript] = useState("");
+  const [fullTranscript, setFullTranscript] = useState("");
   const [transcribing, setTranscribing] = useState(false);
   const [chunksProcessed, setChunksProcessed] = useState(0);
   const [hasStarted, setHasStarted] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -57,11 +59,53 @@ const Record = () => {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const pendingChunksRef = useRef(0);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const streamQueueRef = useRef<string[]>([]);
+  const isStreamingRef = useRef(false);
+
+  // Streaming typewriter effect — drains queue of new text word by word
+  const drainStreamQueue = useCallback(() => {
+    if (isStreamingRef.current) return;
+    if (streamQueueRef.current.length === 0) {
+      setIsStreaming(false);
+      return;
+    }
+
+    isStreamingRef.current = true;
+    setIsStreaming(true);
+
+    const text = streamQueueRef.current.shift()!;
+    const words = text.split(/(\s+)/); // keep whitespace tokens
+    let i = 0;
+
+    const tick = () => {
+      if (i < words.length) {
+        setDisplayedTranscript((prev) => prev + words[i]);
+        i++;
+        requestAnimationFrame(() => setTimeout(tick, 30 + Math.random() * 30));
+      } else {
+        isStreamingRef.current = false;
+        // Drain next queued chunk if any
+        drainStreamQueue();
+      }
+    };
+    tick();
+  }, []);
+
+  // When fullTranscript grows, queue the new portion for streaming
+  const prevFullRef = useRef("");
+  useEffect(() => {
+    if (fullTranscript.length > prevFullRef.current.length) {
+      const newText = fullTranscript.slice(prevFullRef.current.length);
+      prevFullRef.current = fullTranscript;
+      streamQueueRef.current.push(newText);
+      drainStreamQueue();
+    }
+  }, [fullTranscript, drainStreamQueue]);
 
   // Auto-scroll transcript to bottom
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [transcript]);
+  }, [displayedTranscript]);
 
   const requestWakeLock = useCallback(async () => {
     try {
@@ -126,7 +170,7 @@ const Record = () => {
 
       const result = await response.json();
       if (result.text && result.text.trim()) {
-        setTranscript((prev) => (prev ? prev + " " + result.text.trim() : result.text.trim()));
+        setFullTranscript((prev) => (prev ? prev + " " + result.text.trim() : result.text.trim()));
         setChunksProcessed((c) => c + 1);
       }
     } catch (err) {
@@ -174,7 +218,11 @@ const Record = () => {
       setIsRecording(true);
       setHasStarted(true);
       setElapsed(0);
-      setTranscript("");
+      setFullTranscript("");
+      setDisplayedTranscript("");
+      prevFullRef.current = "";
+      streamQueueRef.current = [];
+      isStreamingRef.current = false;
       setChunksProcessed(0);
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
 
@@ -212,7 +260,7 @@ const Record = () => {
   }, [releaseWakeLock]);
 
   const handleSubmit = async () => {
-    if (!transcript.trim()) {
+    if (!fullTranscript.trim()) {
       toast.error("No transcript available yet");
       return;
     }
@@ -249,7 +297,7 @@ const Record = () => {
       if (recError) throw recError;
 
       const { data: fnData, error: fnError } = await supabase.functions.invoke("generate-letter", {
-        body: { recording_id: recording.id, transcript },
+        body: { recording_id: recording.id, transcript: fullTranscript },
       });
 
       if (fnError) throw fnError;
@@ -263,7 +311,11 @@ const Record = () => {
   };
 
   const handleDiscard = () => {
-    setTranscript("");
+    setFullTranscript("");
+    setDisplayedTranscript("");
+    prevFullRef.current = "";
+    streamQueueRef.current = [];
+    isStreamingRef.current = false;
     setElapsed(0);
     setChunksProcessed(0);
     setHasStarted(false);
@@ -379,7 +431,7 @@ const Record = () => {
                     <Button
                       onClick={handleSubmit}
                       className="w-full gap-2 h-11"
-                      disabled={processing || transcribing || !transcript.trim()}
+                      disabled={processing || transcribing || isStreaming || !fullTranscript.trim()}
                     >
                       {processing ? (
                         <>
@@ -428,7 +480,7 @@ const Record = () => {
                     Processing chunk...
                   </div>
                 )}
-                {!transcribing && transcript && (
+                {!transcribing && !isStreaming && displayedTranscript && (
                   <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Up to date</span>
                 )}
               </div>
@@ -447,7 +499,7 @@ const Record = () => {
                       </p>
                     </div>
                   </div>
-                ) : !transcript && !transcribing ? (
+                ) : !displayedTranscript && !transcribing && !isStreaming ? (
                   <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-20">
                     <div className="h-12 w-12 rounded-full bg-amber-50 dark:bg-amber-950 flex items-center justify-center">
                       <Loader2 className="h-5 w-5 text-amber-500 animate-spin" />
@@ -462,15 +514,11 @@ const Record = () => {
                 ) : (
                   <div className="prose prose-sm dark:prose-invert max-w-none">
                     <p className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
-                      {transcript}
+                      {displayedTranscript}
+                      {(isStreaming || transcribing) && (
+                        <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse align-text-bottom" />
+                      )}
                     </p>
-                    {transcribing && (
-                      <span className="inline-flex gap-1 ml-1">
-                        <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                        <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                        <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: "300ms" }} />
-                      </span>
-                    )}
                     <div ref={transcriptEndRef} />
                   </div>
                 )}
@@ -481,7 +529,7 @@ const Record = () => {
                 <div className="px-6 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 rounded-b-xl">
                   <div className="flex items-center justify-between text-xs text-slate-400">
                     <span>Powered by Google MedASR</span>
-                    <span>{transcript.split(/\s+/).filter(Boolean).length} words</span>
+                    <span>{displayedTranscript.split(/\s+/).filter(Boolean).length} words</span>
                   </div>
                 </div>
               )}
