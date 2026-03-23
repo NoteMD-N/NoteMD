@@ -144,18 +144,36 @@ const Record = () => {
       const formData = new FormData();
       formData.append("audio", wavBlob, "chunk.wav");
 
-      const { data, error } = await supabase.functions.invoke("transcribe-chunk", {
-        body: formData,
-      });
-
-      if (error) {
-        console.error("Chunk transcription error:", error);
-        toast.error(`Chunk failed: ${error.message}`);
+      // Get fresh session token
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        console.error("No session");
         return;
       }
 
-      if (data?.text && data.text.trim()) {
-        setFullTranscript((prev) => (prev ? prev + " " + data.text.trim() : data.text.trim()));
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-chunk`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: formData,
+        }
+      );
+
+      const responseText = await response.text();
+
+      if (!response.ok) {
+        console.error("Chunk error:", response.status, responseText);
+        toast.error(`Chunk failed (${response.status}): ${responseText.slice(0, 100)}`);
+        return;
+      }
+
+      const result = JSON.parse(responseText);
+      if (result.text && result.text.trim()) {
+        setFullTranscript((prev) => (prev ? prev + " " + result.text.trim() : result.text.trim()));
         setChunksProcessed((c) => c + 1);
       }
     } catch (err) {
