@@ -5,87 +5,19 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Mic, Square, Loader2, FileText, RotateCcw } from "lucide-react";
 
-const CHUNK_INTERVAL_MS = 30_000; // 30s chunks — MedASR GPU handles one at a time
-
-// Clean MedASR output — strip model artifacts
-function cleanTranscript(text: string): string {
-  return text
-    .replace(/<\/s>/g, "")
-    .replace(/undefined/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 const Record = () => {
   const navigate = useNavigate();
   const [isRecording, setIsRecording] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState("");
   const [elapsed, setElapsed] = useState(0);
-  const [displayedTranscript, setDisplayedTranscript] = useState("");
-  const [fullTranscript, setFullTranscript] = useState("");
-  const [transcribing, setTranscribing] = useState(false);
-  const [chunksProcessed, setChunksProcessed] = useState(0);
-  const [hasStarted, setHasStarted] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [hasRecording, setHasRecording] = useState(false);
 
-  // Refs
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const allChunksRef = useRef<Blob[]>([]); // All recorded blobs for full upload
-  const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
-  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
-  const streamQueueRef = useRef<string[]>([]);
-  const isStreamingRef = useRef(false);
-  const isRecordingRef = useRef(false);
-
-  // Sequential chunk queue for MedASR
-  const sendQueueRef = useRef<Blob[]>([]);
-  const isSendingRef = useRef(false);
-
-  // Streaming typewriter effect
-  const drainStreamQueue = useCallback(() => {
-    if (isStreamingRef.current) return;
-    if (streamQueueRef.current.length === 0) {
-      setIsStreaming(false);
-      return;
-    }
-
-    isStreamingRef.current = true;
-    setIsStreaming(true);
-
-    const text = streamQueueRef.current.shift()!;
-    const words = text.split(/(\s+)/);
-    let i = 0;
-
-    const tick = () => {
-      if (i < words.length) {
-        setDisplayedTranscript((prev) => prev + words[i]);
-        i++;
-        requestAnimationFrame(() => setTimeout(tick, 30 + Math.random() * 30));
-      } else {
-        isStreamingRef.current = false;
-        drainStreamQueue();
-      }
-    };
-    tick();
-  }, []);
-
-  // When fullTranscript grows, queue new portion for streaming
-  const prevFullRef = useRef("");
-  useEffect(() => {
-    if (fullTranscript.length > prevFullRef.current.length) {
-      const newText = fullTranscript.slice(prevFullRef.current.length);
-      prevFullRef.current = fullTranscript;
-      streamQueueRef.current.push(newText);
-      drainStreamQueue();
-    }
-  }, [fullTranscript, drainStreamQueue]);
-
-  useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [displayedTranscript]);
 
   const requestWakeLock = useCallback(async () => {
     try {
@@ -100,128 +32,32 @@ const Record = () => {
     wakeLockRef.current = null;
   }, []);
 
-  // Send one blob to MedASR sequentially
-  const processNextInQueue = useCallback(async () => {
-    if (isSendingRef.current || sendQueueRef.current.length === 0) return;
-
-    isSendingRef.current = true;
-    setTranscribing(true);
-    const blob = sendQueueRef.current.shift()!;
-
-    try {
-      const formData = new FormData();
-      formData.append("audio", blob, "chunk.webm");
-
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-chunk`,
-        {
-          method: "POST",
-          headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY },
-          body: formData,
-        }
-      );
-
-      const responseText = await response.text();
-
-      if (!response.ok) {
-        console.error("Chunk error:", response.status, responseText);
-        toast.error(`Chunk failed (${response.status}): ${responseText.slice(0, 100)}`);
-      } else {
-        const result = JSON.parse(responseText);
-        const cleaned = cleanTranscript(result.text || "");
-        if (cleaned) {
-          setFullTranscript((prev) => (prev ? prev + " " + cleaned : cleaned));
-          setChunksProcessed((c) => c + 1);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to transcribe chunk:", err);
-    } finally {
-      isSendingRef.current = false;
-      if (sendQueueRef.current.length > 0) {
-        processNextInQueue();
-      } else {
-        setTranscribing(false);
-      }
-    }
-  }, []);
-
-  const mimeTypeRef = useRef("audio/webm");
-
-  // Start a new MediaRecorder and return it. On stop, creates a complete blob.
-  const startNewRecorder = useCallback((stream: MediaStream): MediaRecorder => {
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-    mimeTypeRef.current = mimeType;
-
-    const chunks: Blob[] = [];
-    const recorder = new MediaRecorder(stream, { mimeType });
-
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        chunks.push(e.data);
-        allChunksRef.current.push(e.data);
-      }
-    };
-
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: mimeType });
-      console.log("Segment complete:", blob.size, "bytes");
-      if (blob.size > 1000) {
-        sendQueueRef.current.push(blob);
-        processNextInQueue();
-      }
-
-      // Auto-start next segment if still recording
-      if (isRecordingRef.current && streamRef.current?.active) {
-        const next = startNewRecorder(streamRef.current);
-        mediaRecorderRef.current = next;
-        next.start();
-      }
-    };
-
-    return recorder;
-  }, [processNextInQueue]);
-
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      chunksRef.current = [];
 
-      // Clear state
-      allChunksRef.current = [];
-      sendQueueRef.current = [];
-      isSendingRef.current = false;
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
 
-      if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-
-      setIsRecording(true);
-      isRecordingRef.current = true;
-      setHasStarted(true);
-      setElapsed(0);
-      setFullTranscript("");
-      setDisplayedTranscript("");
-      prevFullRef.current = "";
-      streamQueueRef.current = [];
-      isStreamingRef.current = false;
-      setChunksProcessed(0);
-
-      // Start first recorder segment
-      const recorder = startNewRecorder(stream);
+      const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = recorder;
-      recorder.start();
 
-      // Every 30s, stop current recorder (triggers onstop → sends blob → starts new one)
-      chunkTimerRef.current = setInterval(() => {
-        const r = mediaRecorderRef.current;
-        if (r && r.state === "recording") {
-          r.stop();
-        }
-      }, CHUNK_INTERVAL_MS);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
 
-      // Timer
+      recorder.onstop = () => {
+        setHasRecording(chunksRef.current.length > 0);
+      };
+
+      recorder.start(1000); // collect data every second
+      setIsRecording(true);
+      setElapsed(0);
+      setHasRecording(false);
+
       const startTime = Date.now();
       timerRef.current = setInterval(() => {
         setElapsed(Math.floor((Date.now() - startTime) / 1000));
@@ -231,16 +67,12 @@ const Record = () => {
     } catch {
       toast.error("Microphone access denied");
     }
-  }, [startNewRecorder, requestWakeLock]);
+  }, [requestWakeLock]);
 
   const stopRecording = useCallback(() => {
-    isRecordingRef.current = false; // Prevents auto-restart in onstop
     setIsRecording(false);
-
-    if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
 
-    // Stop recorder — onstop will create final blob and send it
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state === "recording") {
       recorder.stop();
@@ -253,45 +85,51 @@ const Record = () => {
   useEffect(() => {
     return () => {
       releaseWakeLock();
-      if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [releaseWakeLock]);
 
   const handleSubmit = async () => {
-    if (!fullTranscript.trim()) {
-      toast.error("No transcript available yet");
+    if (chunksRef.current.length === 0) {
+      toast.error("No recording available");
       return;
     }
+
     setProcessing(true);
+    setProcessingStatus("Uploading recording...");
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      // Upload full recording as webm
-      const fullBlob = new Blob(allChunksRef.current, { type: "audio/webm" });
+      // Upload full recording
+      const blob = new Blob(chunksRef.current, { type: "audio/webm" });
       const fileName = `${user.id}/${Date.now()}.webm`;
       const { error: uploadError } = await supabase.storage
         .from("audio-recordings")
-        .upload(fileName, fullBlob);
+        .upload(fileName, blob);
       if (uploadError) throw uploadError;
 
+      // Create recording record
+      setProcessingStatus("Creating recording...");
       const { data: recording, error: recError } = await supabase
         .from("recordings")
         .insert({
           user_id: user.id,
           audio_path: fileName,
-          status: "transcribed",
+          status: "uploaded",
           duration_seconds: elapsed,
         })
         .select()
         .single();
       if (recError) throw recError;
 
-      const { data: fnData, error: fnError } = await supabase.functions.invoke("generate-letter", {
-        body: { recording_id: recording.id, transcript: fullTranscript },
-      });
+      // Transcribe + generate letter in one call
+      setProcessingStatus("Transcribing & generating letter...");
+      const { data: fnData, error: fnError } = await supabase.functions.invoke(
+        "generate-letter",
+        { body: { recording_id: recording.id, audio_path: fileName } }
+      );
 
       if (fnError) throw fnError;
 
@@ -300,52 +138,47 @@ const Record = () => {
     } catch (error: any) {
       toast.error(error.message || "Failed to process recording");
       setProcessing(false);
+      setProcessingStatus("");
     }
   };
 
   const handleDiscard = () => {
-    setFullTranscript("");
-    setDisplayedTranscript("");
-    prevFullRef.current = "";
-    streamQueueRef.current = [];
-    isStreamingRef.current = false;
+    chunksRef.current = [];
     setElapsed(0);
-    setChunksProcessed(0);
-    setHasStarted(false);
-    allChunksRef.current = [];
+    setHasRecording(false);
   };
 
   const formatTime = (s: number) =>
     `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
-  const hasStopped = !isRecording && hasStarted;
+  const hasStopped = !isRecording && hasRecording;
 
   return (
     <div className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 min-h-full">
       <div className="p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-6xl mx-auto">
+        <div className="max-w-lg mx-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-8">
+            <div className="flex flex-col items-center gap-6">
+              {/* Status label */}
+              <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+                processing
+                  ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400"
+                  : isRecording
+                  ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400"
+                  : hasStopped
+                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+                  : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+              }`}>
+                {processing ? "● Processing" : isRecording ? "● Recording" : hasStopped ? "✓ Complete" : "Ready"}
+              </div>
 
-          {/* Left panel — Recording controls */}
-          <div className="lg:col-span-4">
-            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-8 sticky top-20">
-              <div className="flex flex-col items-center gap-6">
-                {/* Status label */}
-                <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
-                  isRecording
-                    ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400"
-                    : hasStopped
-                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
-                    : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                }`}>
-                  {isRecording ? "● Recording" : hasStopped ? "✓ Complete" : "Ready"}
-                </div>
+              {/* Timer */}
+              <div className="text-5xl font-mono font-bold tabular-nums text-slate-900 dark:text-slate-100 tracking-tight">
+                {formatTime(elapsed)}
+              </div>
 
-                {/* Timer */}
-                <div className="text-5xl font-mono font-bold tabular-nums text-slate-900 dark:text-slate-100 tracking-tight">
-                  {formatTime(elapsed)}
-                </div>
-
-                {/* Record / Stop button */}
+              {/* Record / Stop button */}
+              {!processing && (
                 <div className="relative">
                   {isRecording && (
                     <div className="absolute -inset-3 rounded-full bg-red-500/10 animate-pulse" />
@@ -368,134 +201,54 @@ const Record = () => {
                     )}
                   </button>
                 </div>
+              )}
 
+              {/* Processing spinner */}
+              {processing && (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="relative">
+                    <div className="absolute -inset-3 rounded-full bg-blue-500/10 animate-pulse" />
+                    <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-primary shadow-lg shadow-primary/25">
+                      <Loader2 className="h-8 w-8 text-white animate-spin" />
+                    </div>
+                  </div>
+                  <p className="text-sm text-slate-600 dark:text-slate-400 font-medium">
+                    {processingStatus}
+                  </p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 text-center max-w-xs">
+                    This may take a minute. Audio is being transcribed and your clinical letter is being generated.
+                  </p>
+                </div>
+              )}
+
+              {!processing && (
                 <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
                   {isRecording
                     ? "Tap to stop recording"
                     : hasStopped
-                    ? "Recording finished"
+                    ? "Recording finished — generate your letter or re-record"
                     : "Tap to start consultation recording"}
                 </p>
+              )}
 
-                {/* Chunk progress */}
-                {hasStarted && (
-                  <div className="w-full pt-2 border-t border-slate-100 dark:border-slate-800">
-                    <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                      <span>Chunks transcribed</span>
-                      <div className="flex items-center gap-1.5">
-                        {transcribing && <Loader2 className="h-3 w-3 animate-spin" />}
-                        <span className="font-medium text-slate-700 dark:text-slate-300">{chunksProcessed}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Actions after stop */}
-                {hasStopped && (
-                  <div className="w-full space-y-2 pt-2">
-                    <Button
-                      onClick={handleSubmit}
-                      className="w-full gap-2 h-11"
-                      disabled={processing || transcribing || isStreaming || !fullTranscript.trim()}
-                    >
-                      {processing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Generating Letter...
-                        </>
-                      ) : transcribing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Finishing transcription...
-                        </>
-                      ) : (
-                        <>
-                          <FileText className="h-4 w-4" />
-                          Generate Letter
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      onClick={handleDiscard}
-                      className="w-full gap-2 text-slate-500 hover:text-slate-700"
-                      disabled={processing || transcribing}
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      Discard & Re-record
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Right panel — Live transcript */}
-          <div className="lg:col-span-8">
-            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm h-full min-h-[500px] flex flex-col">
-              {/* Transcript header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-slate-400" />
-                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Live Transcript</h2>
-                </div>
-                {transcribing && (
-                  <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Processing chunk...
-                  </div>
-                )}
-                {!transcribing && !isStreaming && displayedTranscript && (
-                  <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Up to date</span>
-                )}
-              </div>
-
-              {/* Transcript body */}
-              <div className="flex-1 overflow-y-auto px-6 py-4">
-                {!hasStarted ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-20">
-                    <div className="h-12 w-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                      <Mic className="h-5 w-5 text-slate-400" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Ready to transcribe</p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                        Start recording and your transcript will appear here in real-time
-                      </p>
-                    </div>
-                  </div>
-                ) : !displayedTranscript && !transcribing && !isStreaming ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-20">
-                    <div className="h-12 w-12 rounded-full bg-amber-50 dark:bg-amber-950 flex items-center justify-center">
-                      <Loader2 className="h-5 w-5 text-amber-500 animate-spin" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Waiting for first chunk...</p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                        Audio is sent every 30 seconds — first transcript will appear shortly
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    <p className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
-                      {displayedTranscript}
-                      {(isStreaming || transcribing) && (
-                        <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse align-text-bottom" />
-                      )}
-                    </p>
-                    <div ref={transcriptEndRef} />
-                  </div>
-                )}
-              </div>
-
-              {/* Transcript footer */}
-              {hasStarted && (
-                <div className="px-6 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 rounded-b-xl">
-                  <div className="flex items-center justify-between text-xs text-slate-400">
-                    <span>Powered by Google MedASR</span>
-                    <span>{displayedTranscript.split(/\s+/).filter(Boolean).length} words</span>
-                  </div>
+              {/* Actions after stop */}
+              {hasStopped && !processing && (
+                <div className="w-full space-y-2 pt-2">
+                  <Button
+                    onClick={handleSubmit}
+                    className="w-full gap-2 h-11"
+                  >
+                    <FileText className="h-4 w-4" />
+                    Generate Letter
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleDiscard}
+                    className="w-full gap-2 text-slate-500 hover:text-slate-700"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Discard & Re-record
+                  </Button>
                 </div>
               )}
             </div>
