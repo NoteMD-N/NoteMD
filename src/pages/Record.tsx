@@ -45,7 +45,8 @@ const Record = () => {
   const connectDeepgram = useCallback(async (): Promise<WebSocket> => {
     // Get Deepgram API key from our edge function
     const { data, error } = await supabase.functions.invoke("deepgram-token");
-    if (error || !data?.key) throw new Error("Failed to get Deepgram token");
+    console.log("[Deepgram] Token response:", { data, error });
+    if (error || !data?.key) throw new Error(error?.message || "Failed to get Deepgram token");
 
     const params = new URLSearchParams({
       model: "nova-2-medical",
