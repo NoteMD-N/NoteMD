@@ -112,7 +112,7 @@ serve(async (req) => {
     }
 
     const userId = claimsData.claims.sub;
-    const { recording_id, audio_path, transcript: preBuiltTranscript } = await req.json();
+    const { recording_id, audio_path, transcript: preBuiltTranscript, mode } = await req.json();
 
     if (!recording_id) {
       throw new Error("recording_id is required");
@@ -183,8 +183,15 @@ serve(async (req) => {
         .eq("id", recording_id);
     }
 
-    // Step 2: Generate clinical letter (Claude preferred, GPT fallback)
-    const systemPrompt = `You are a professional UK clinical documentation assistant. Convert consultation transcripts into clinical letters using the exact template format below. Do not deviate from this structure.
+    // Step 2: Generate clinical letter
+    // Check if user has a custom template
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("letter_template")
+      .eq("user_id", userId)
+      .single();
+
+    const defaultConsultationPrompt = `You are a professional UK clinical documentation assistant. Convert consultation transcripts into clinical letters using the exact template format below. Do not deviate from this structure.
 
 TEMPLATE FORMAT:
 
@@ -216,7 +223,25 @@ RULES:
 - Be thorough and detailed — include ALL clinical information from the transcript
 - The letter should be comprehensive enough that the GP has a complete picture of the consultation`;
 
-    const userPrompt = `Please convert the following consultation transcript into a clinical letter using the template format:\n\n${transcript}`;
+    const defaultDictationPrompt = `You are a professional UK clinical documentation assistant. The following is a dictated clinical note. Clean it up into a well-structured, professional clinical document while preserving all clinical details exactly as dictated.
+
+RULES:
+- Correct grammar, punctuation, and formatting but do NOT change clinical meaning
+- Structure the output with clear headings where appropriate (e.g. Presenting Complaint, History, Examination, Impression, Plan)
+- Remove filler words, false starts, and repetitions
+- Use formal UK medical conventions
+- Do not fabricate or infer any clinical details not present in the dictation
+- Preserve all medical terminology exactly as dictated`;
+
+    const systemPrompt = profileData?.letter_template
+      ? profileData.letter_template
+      : mode === "dictation"
+      ? defaultDictationPrompt
+      : defaultConsultationPrompt;
+
+    const userPrompt = mode === "dictation"
+      ? `Please clean up the following dictated clinical note:\n\n${transcript}`
+      : `Please convert the following consultation transcript into a clinical letter using the template format:\n\n${transcript}`;
 
     const gptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
