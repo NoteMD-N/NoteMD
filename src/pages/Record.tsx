@@ -2,22 +2,44 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Mic, Square, Loader2, FileText, RotateCcw, Pause, Play, Upload, Stethoscope, PenLine } from "lucide-react";
+import {
+  Mic,
+  Square,
+  Loader2,
+  FileText,
+  RotateCcw,
+  Pause,
+  Play,
+  Upload,
+  Stethoscope,
+  PenLine,
+  WifiOff,
+  Wifi,
+  AlertTriangle,
+} from "lucide-react";
 
 type RecordMode = "consultation" | "dictation";
+type ConnectionQuality = "good" | "fair" | "poor" | "offline";
 
 const Record = () => {
   const navigate = useNavigate();
   const [mode, setMode] = useState<RecordMode>("consultation");
+  const [patientName, setPatientName] = useState("");
+  const [patientId, setPatientId] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const [hasRecording, setHasRecording] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [interimText, setInterimText] = useState("");
+  const [connectionQuality, setConnectionQuality] = useState<ConnectionQuality>("good");
+  const [deepgramReady, setDeepgramReady] = useState(false);
 
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -29,17 +51,82 @@ const Record = () => {
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const elapsedBeforePauseRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const deepgramKeyRef = useRef<string | null>(null);
+  const modeRef = useRef<RecordMode>(mode);
+
+  // Keep modeRef in sync for use inside async callbacks
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript, interimText]);
+
+  // Pre-warm Deepgram token on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("deepgram-token");
+        if (!error && data?.key) {
+          deepgramKeyRef.current = data.key;
+          setDeepgramReady(true);
+        }
+      } catch (e) {
+        console.error("Failed to pre-warm Deepgram token", e);
+      }
+    })();
+  }, []);
+
+  // Connection quality monitor
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkConnection = async () => {
+      if (!navigator.onLine) {
+        if (!cancelled) setConnectionQuality("offline");
+        return;
+      }
+
+      try {
+        const start = performance.now();
+        await fetch("https://api.deepgram.com/v1/", { method: "HEAD", mode: "no-cors" });
+        const rtt = performance.now() - start;
+        if (cancelled) return;
+
+        if (rtt < 300) setConnectionQuality("good");
+        else if (rtt < 800) setConnectionQuality("fair");
+        else setConnectionQuality("poor");
+      } catch {
+        if (!cancelled) setConnectionQuality("poor");
+      }
+    };
+
+    checkConnection();
+    const interval = setInterval(checkConnection, 15000);
+
+    const onOnline = () => setConnectionQuality("good");
+    const onOffline = () => setConnectionQuality("offline");
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
 
   const requestWakeLock = useCallback(async () => {
     try {
       if ("wakeLock" in navigator) {
         wakeLockRef.current = await navigator.wakeLock.request("screen");
       }
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
   }, []);
 
   const releaseWakeLock = useCallback(() => {
@@ -48,9 +135,14 @@ const Record = () => {
   }, []);
 
   const connectDeepgram = useCallback(async (): Promise<WebSocket> => {
-    const { data, error } = await supabase.functions.invoke("deepgram-token");
-    console.log("[Deepgram] Token response:", { data, error });
-    if (error || !data?.key) throw new Error(error?.message || "Failed to get Deepgram token");
+    // Use pre-fetched key if available, else fetch now
+    let key = deepgramKeyRef.current;
+    if (!key) {
+      const { data, error } = await supabase.functions.invoke("deepgram-token");
+      if (error || !data?.key) throw new Error(error?.message || "Failed to get Deepgram token");
+      key = data.key;
+      deepgramKeyRef.current = key;
+    }
 
     const params = new URLSearchParams({
       model: "nova-2-medical",
@@ -64,16 +156,22 @@ const Record = () => {
 
     const ws = new WebSocket(
       `wss://api.deepgram.com/v1/listen?${params}`,
-      ["token", data.key]
+      ["token", key!]
     );
 
     return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Deepgram connection timed out"));
+      }, 10000);
+
       ws.onopen = () => {
+        clearTimeout(timeout);
         console.log("[Deepgram] Connected");
         resolve(ws);
       };
 
       ws.onerror = (e) => {
+        clearTimeout(timeout);
         console.error("[Deepgram] Error:", e);
         reject(new Error("Deepgram connection failed"));
       };
@@ -106,16 +204,21 @@ const Record = () => {
   }, []);
 
   const startRecording = useCallback(async () => {
+    if (isStarting) return;
+    setIsStarting(true);
+
     try {
       setTranscript("");
       setInterimText("");
       transcriptRef.current = "";
       elapsedBeforePauseRef.current = 0;
 
-      const ws = await connectDeepgram();
+      // Connect Deepgram and get mic in parallel
+      const [ws, stream] = await Promise.all([
+        connectDeepgram(),
+        navigator.mediaDevices.getUserMedia({ audio: true }),
+      ]);
       wsRef.current = ws;
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       chunksRef.current = [];
 
@@ -129,7 +232,8 @@ const Record = () => {
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           chunksRef.current.push(e.data);
-          if (ws.readyState === WebSocket.OPEN) {
+          // Only stream to Deepgram when recording (not paused)
+          if (ws.readyState === WebSocket.OPEN && recorder.state === "recording") {
             ws.send(e.data);
           }
         }
@@ -147,8 +251,21 @@ const Record = () => {
 
       const startTime = Date.now();
       timerRef.current = setInterval(() => {
-        setElapsed(elapsedBeforePauseRef.current + Math.floor((Date.now() - startTime) / 1000));
+        setElapsed(
+          elapsedBeforePauseRef.current + Math.floor((Date.now() - startTime) / 1000)
+        );
       }, 1000);
+
+      // Keepalive ping for Deepgram during pauses (every 5s)
+      keepAliveRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: "KeepAlive" }));
+          } catch {
+            /* ignore */
+          }
+        }
+      }, 5000);
 
       await requestWakeLock();
     } catch (err: any) {
@@ -157,8 +274,10 @@ const Record = () => {
         wsRef.current.close();
         wsRef.current = null;
       }
+    } finally {
+      setIsStarting(false);
     }
-  }, [connectDeepgram, requestWakeLock]);
+  }, [connectDeepgram, requestWakeLock, isStarting]);
 
   const pauseRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
@@ -167,55 +286,78 @@ const Record = () => {
       setIsPaused(true);
       elapsedBeforePauseRef.current = elapsed;
       if (timerRef.current) clearInterval(timerRef.current);
+      // KeepAlive interval continues to prevent Deepgram timeout
     }
   }, [elapsed]);
 
   const resumeRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state === "paused") {
-      recorder.resume();
-      setIsPaused(false);
-      const startTime = Date.now();
-      timerRef.current = setInterval(() => {
-        setElapsed(elapsedBeforePauseRef.current + Math.floor((Date.now() - startTime) / 1000));
-      }, 1000);
+      try {
+        recorder.resume();
+        setIsPaused(false);
+        const startTime = Date.now();
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = setInterval(() => {
+          setElapsed(
+            elapsedBeforePauseRef.current +
+              Math.floor((Date.now() - startTime) / 1000)
+          );
+        }, 1000);
+      } catch (e) {
+        console.error("Failed to resume recording", e);
+        toast.error("Could not resume. Please stop and start again.");
+      }
+    }
+  }, []);
+
+  const cleanup = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+    timerRef.current = null;
+    keepAliveRef.current = null;
+
+    const recorder = mediaRecorderRef.current;
+    if (recorder && (recorder.state === "recording" || recorder.state === "paused")) {
+      try {
+        recorder.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        wsRef.current.send(JSON.stringify({ type: "CloseStream" }));
+      } catch {
+        /* ignore */
+      }
+      setTimeout(() => {
+        wsRef.current?.close();
+        wsRef.current = null;
+      }, 500);
     }
   }, []);
 
   const stopRecording = useCallback(() => {
     setIsRecording(false);
     setIsPaused(false);
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    const recorder = mediaRecorderRef.current;
-    if (recorder && (recorder.state === "recording" || recorder.state === "paused")) {
-      recorder.stop();
-    }
-
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "CloseStream" }));
-      setTimeout(() => {
-        wsRef.current?.close();
-        wsRef.current = null;
-      }, 500);
-    }
-
+    cleanup();
     releaseWakeLock();
-  }, [releaseWakeLock]);
+  }, [cleanup, releaseWakeLock]);
 
   useEffect(() => {
     return () => {
       releaseWakeLock();
-      if (timerRef.current) clearInterval(timerRef.current);
-      wsRef.current?.close();
+      cleanup();
     };
-  }, [releaseWakeLock]);
+  }, [releaseWakeLock, cleanup]);
 
   const processAudio = async (audioBlob: Blob, audioTranscript?: string) => {
     setProcessing(true);
-    setProcessingStatus("Uploading recording...");
+    setProcessingStatus("Preparing recording...");
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -223,23 +365,40 @@ const Record = () => {
 
       const ext = audioBlob.type.includes("webm") ? "webm" : "wav";
       const fileName = `${user.id}/${Date.now()}.${ext}`;
-      const { error: uploadError } = await supabase.storage
-        .from("audio-recordings")
-        .upload(fileName, audioBlob);
-      if (uploadError) throw uploadError;
 
+      // Create recording row first so we have an ID
       setProcessingStatus("Creating recording...");
       const { data: recording, error: recError } = await supabase
         .from("recordings")
         .insert({
           user_id: user.id,
           audio_path: fileName,
-          status: "uploaded",
+          status: "processing",
           duration_seconds: elapsed,
+          patient_name: patientName || null,
+          patient_id: patientId || null,
+          mode: modeRef.current,
         })
         .select()
         .single();
       if (recError) throw recError;
+
+      // Kick off audio upload in background (non-blocking)
+      const uploadPromise = supabase.storage
+        .from("audio-recordings")
+        .upload(fileName, audioBlob)
+        .then(({ error }) => {
+          if (error) console.error("Background upload failed:", error);
+        });
+
+      // If we have a transcript AND we're in consultation mode, generate letter immediately
+      // For dictation mode, we need MedASR re-transcribe which requires audio in storage first
+      const needsAudioUpload = !audioTranscript || modeRef.current === "dictation";
+
+      if (needsAudioUpload) {
+        setProcessingStatus("Uploading audio...");
+        await uploadPromise;
+      }
 
       setProcessingStatus("Generating clinical letter...");
       const { data: fnData, error: fnError } = await supabase.functions.invoke(
@@ -249,7 +408,9 @@ const Record = () => {
             recording_id: recording.id,
             audio_path: fileName,
             transcript: audioTranscript || undefined,
-            mode,
+            mode: modeRef.current,
+            patient_name: patientName || undefined,
+            patient_id: patientId || undefined,
           },
         }
       );
@@ -279,14 +440,14 @@ const Record = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const validTypes = ["audio/webm", "audio/wav", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/m4a", "audio/ogg", "audio/x-m4a"];
-    if (!validTypes.some((t) => file.type.includes(t.split("/")[1]))) {
+    const validExts = ["webm", "wav", "mp3", "m4a", "ogg", "mp4", "mpeg"];
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    if (!validExts.includes(ext)) {
       toast.error("Unsupported audio format. Please use WAV, MP3, M4A, or WebM.");
       return;
     }
 
     await processAudio(file);
-    // Reset file input
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -305,37 +466,100 @@ const Record = () => {
   const hasStopped = !isRecording && hasRecording;
   const hasTranscript = transcript.length > 0 || interimText.length > 0;
   const canToggleMode = !isRecording && !hasStopped && !processing;
+  const canEditPatient = !isRecording && !processing;
+
+  const connectionMeta = {
+    good: {
+      icon: <Wifi className="h-3.5 w-3.5" />,
+      label: "Good connection",
+      colour: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950 dark:text-emerald-400",
+    },
+    fair: {
+      icon: <Wifi className="h-3.5 w-3.5" />,
+      label: "Fair connection",
+      colour: "text-amber-600 bg-amber-50 dark:bg-amber-950 dark:text-amber-400",
+    },
+    poor: {
+      icon: <AlertTriangle className="h-3.5 w-3.5" />,
+      label: "Poor connection — live transcript may lag",
+      colour: "text-orange-600 bg-orange-50 dark:bg-orange-950 dark:text-orange-400",
+    },
+    offline: {
+      icon: <WifiOff className="h-3.5 w-3.5" />,
+      label: "Offline — cannot record",
+      colour: "text-red-600 bg-red-50 dark:bg-red-950 dark:text-red-400",
+    },
+  }[connectionQuality];
 
   return (
     <div className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 min-h-full">
       <div className="p-6">
         <div className="max-w-5xl mx-auto space-y-4">
-          {/* Mode toggle */}
-          <div className="flex items-center justify-center gap-2">
-            <button
-              onClick={() => canToggleMode && setMode("consultation")}
-              disabled={!canToggleMode}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                mode === "consultation"
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
-              } ${!canToggleMode ? "opacity-50 cursor-not-allowed" : ""}`}
-            >
-              <Stethoscope className="h-4 w-4" />
-              Consultation
-            </button>
-            <button
-              onClick={() => canToggleMode && setMode("dictation")}
-              disabled={!canToggleMode}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                mode === "dictation"
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
-              } ${!canToggleMode ? "opacity-50 cursor-not-allowed" : ""}`}
-            >
-              <PenLine className="h-4 w-4" />
-              Dictation
-            </button>
+          {/* Top bar: mode toggle + connection status */}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => canToggleMode && setMode("consultation")}
+                disabled={!canToggleMode}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  mode === "consultation"
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
+                } ${!canToggleMode ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                <Stethoscope className="h-4 w-4" />
+                Consultation
+              </button>
+              <button
+                onClick={() => canToggleMode && setMode("dictation")}
+                disabled={!canToggleMode}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  mode === "dictation"
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
+                } ${!canToggleMode ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                <PenLine className="h-4 w-4" />
+                Dictation
+              </button>
+            </div>
+
+            <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionMeta.colour}`}>
+              {connectionMeta.icon}
+              {connectionMeta.label}
+            </div>
+          </div>
+
+          {/* Patient info */}
+          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="patientName" className="text-xs font-medium text-slate-600 dark:text-slate-400">
+                  Patient Name
+                </Label>
+                <Input
+                  id="patientName"
+                  value={patientName}
+                  onChange={(e) => setPatientName(e.target.value)}
+                  placeholder="e.g. John Smith"
+                  disabled={!canEditPatient}
+                  className="h-9"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="patientId" className="text-xs font-medium text-slate-600 dark:text-slate-400">
+                  Patient ID / NHS Number
+                </Label>
+                <Input
+                  id="patientId"
+                  value={patientId}
+                  onChange={(e) => setPatientId(e.target.value)}
+                  placeholder="e.g. 123 456 7890"
+                  disabled={!canEditPatient}
+                  className="h-9"
+                />
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -343,18 +567,34 @@ const Record = () => {
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-8">
               <div className="flex flex-col items-center gap-6">
                 {/* Status label */}
-                <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
-                  processing
-                    ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400"
+                <div
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+                    processing
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400"
+                      : isStarting
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400"
+                      : isPaused
+                      ? "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
+                      : isRecording
+                      ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400"
+                      : hasStopped
+                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+                      : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                  }`}
+                >
+                  {processing
+                    ? "● Processing"
+                    : isStarting
+                    ? "● Connecting..."
                     : isPaused
-                    ? "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
+                    ? "❚❚ Paused"
                     : isRecording
-                    ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400"
+                    ? "● Recording"
                     : hasStopped
-                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
-                    : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                }`}>
-                  {processing ? "● Processing" : isPaused ? "❚❚ Paused" : isRecording ? "● Recording" : hasStopped ? "✓ Complete" : "Ready"}
+                    ? "✓ Complete"
+                    : deepgramReady
+                    ? "Ready"
+                    : "Loading..."}
                 </div>
 
                 {/* Timer */}
@@ -365,23 +605,24 @@ const Record = () => {
                 {/* Recording buttons */}
                 {!processing && (
                   <div className="flex items-center gap-4">
-                    {/* Main record/stop button */}
                     <div className="relative">
                       {isRecording && !isPaused && (
                         <div className="absolute -inset-3 rounded-full bg-red-500/10 animate-pulse" />
                       )}
                       <button
                         onClick={isRecording ? stopRecording : startRecording}
-                        disabled={processing || hasStopped}
+                        disabled={processing || hasStopped || isStarting || connectionQuality === "offline"}
                         className={`relative flex h-20 w-20 items-center justify-center rounded-full transition-all shadow-lg ${
                           isRecording
                             ? "bg-red-500 hover:bg-red-600 shadow-red-500/25"
-                            : hasStopped
+                            : hasStopped || connectionQuality === "offline"
                             ? "bg-slate-300 dark:bg-slate-700 cursor-not-allowed"
                             : "bg-primary hover:bg-primary/90 shadow-primary/25"
                         }`}
                       >
-                        {isRecording ? (
+                        {isStarting ? (
+                          <Loader2 className="h-7 w-7 text-white animate-spin" />
+                        ) : isRecording ? (
                           <Square className="h-7 w-7 text-white" />
                         ) : (
                           <Mic className="h-7 w-7 text-white" />
@@ -389,7 +630,6 @@ const Record = () => {
                       </button>
                     </div>
 
-                    {/* Pause/resume button */}
                     {isRecording && (
                       <button
                         onClick={isPaused ? resumeRecording : pauseRecording}
@@ -409,7 +649,6 @@ const Record = () => {
                   </div>
                 )}
 
-                {/* Processing spinner */}
                 {processing && (
                   <div className="flex flex-col items-center gap-3">
                     <div className="relative">
@@ -426,25 +665,27 @@ const Record = () => {
 
                 {!processing && (
                   <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-                    {isPaused
-                      ? "Recording paused — tap play to resume or stop to finish"
+                    {isStarting
+                      ? "Connecting to transcription service..."
+                      : isPaused
+                      ? "Recording paused — tap play to resume"
                       : isRecording
-                      ? "Tap stop to end, or pause to take a break"
+                      ? "Tap stop to finish, or pause to take a break"
                       : hasStopped
                       ? "Recording finished — generate your letter or re-record"
+                      : connectionQuality === "offline"
+                      ? "You are offline. Reconnect to start recording."
+                      : connectionQuality === "poor"
+                      ? "Weak connection — recording may be slow to start"
                       : mode === "consultation"
                       ? "Record a consultation or upload an audio file"
                       : "Dictate your clinical notes or upload an audio file"}
                   </p>
                 )}
 
-                {/* Actions after stop */}
                 {hasStopped && !processing && (
                   <div className="w-full space-y-2 pt-2">
-                    <Button
-                      onClick={handleSubmit}
-                      className="w-full gap-2 h-11"
-                    >
+                    <Button onClick={handleSubmit} className="w-full gap-2 h-11">
                       <FileText className="h-4 w-4" />
                       Generate Letter
                     </Button>
@@ -459,7 +700,6 @@ const Record = () => {
                   </div>
                 )}
 
-                {/* Upload option — only when idle */}
                 {!isRecording && !hasStopped && !processing && (
                   <div className="w-full pt-2 border-t border-slate-200 dark:border-slate-800">
                     <input
@@ -510,7 +750,8 @@ const Record = () => {
                     {transcript}
                     {interimText && (
                       <span className="text-slate-400 dark:text-slate-500">
-                        {transcript ? " " : ""}{interimText}
+                        {transcript ? " " : ""}
+                        {interimText}
                       </span>
                     )}
                     <div ref={transcriptEndRef} />
@@ -520,6 +761,8 @@ const Record = () => {
                     <p className="text-sm text-slate-400 dark:text-slate-500 text-center">
                       {isRecording
                         ? "Waiting for speech..."
+                        : mode === "dictation"
+                        ? "Dictation mode — MedASR will re-transcribe for highest accuracy"
                         : "Transcript will appear here as you speak"}
                     </p>
                   </div>

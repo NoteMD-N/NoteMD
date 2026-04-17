@@ -19,6 +19,8 @@ export type Database = {
           created_at: string
           id: string
           letter_content: string | null
+          patient_id: string | null
+          patient_name: string | null
           recording_id: string
           status: string
           transcript: string | null
@@ -29,6 +31,8 @@ export type Database = {
           created_at?: string
           id?: string
           letter_content?: string | null
+          patient_id?: string | null
+          patient_name?: string | null
           recording_id: string
           status?: string
           transcript?: string | null
@@ -39,6 +43,8 @@ export type Database = {
           created_at?: string
           id?: string
           letter_content?: string | null
+          patient_id?: string | null
+          patient_name?: string | null
           recording_id?: string
           status?: string
           transcript?: string | null
@@ -91,6 +97,9 @@ export type Database = {
           created_at: string
           duration_seconds: number | null
           id: string
+          mode: string | null
+          patient_id: string | null
+          patient_name: string | null
           status: string
           updated_at: string
           user_id: string
@@ -100,6 +109,9 @@ export type Database = {
           created_at?: string
           duration_seconds?: number | null
           id?: string
+          mode?: string | null
+          patient_id?: string | null
+          patient_name?: string | null
           status?: string
           updated_at?: string
           user_id: string
@@ -109,6 +121,9 @@ export type Database = {
           created_at?: string
           duration_seconds?: number | null
           id?: string
+          mode?: string | null
+          patient_id?: string | null
+          patient_name?: string | null
           status?: string
           updated_at?: string
           user_id?: string

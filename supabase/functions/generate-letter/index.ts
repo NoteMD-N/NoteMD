@@ -112,7 +112,14 @@ serve(async (req) => {
     }
 
     const userId = claimsData.claims.sub;
-    const { recording_id, audio_path, transcript: preBuiltTranscript, mode } = await req.json();
+    const {
+      recording_id,
+      audio_path,
+      transcript: preBuiltTranscript,
+      mode,
+      patient_name,
+      patient_id,
+    } = await req.json();
 
     if (!recording_id) {
       throw new Error("recording_id is required");
@@ -120,11 +127,12 @@ serve(async (req) => {
 
     let transcript: string;
 
-    if (preBuiltTranscript) {
-      // Transcript was already built from chunked real-time transcription
-      transcript = preBuiltTranscript;
+    // For dictation mode, always use MedASR for highest accuracy (re-transcribe even if Deepgram transcript exists)
+    const shouldUseMedAsr = mode === "dictation" || !preBuiltTranscript;
 
-      // Update status
+    if (preBuiltTranscript && !shouldUseMedAsr) {
+      // Consultation mode: use Deepgram transcript directly
+      transcript = preBuiltTranscript;
       await supabase
         .from("recordings")
         .update({ status: "transcribed" })
@@ -191,47 +199,121 @@ serve(async (req) => {
       .eq("user_id", userId)
       .single();
 
-    const defaultConsultationPrompt = `You are a professional UK clinical documentation assistant. Convert consultation transcripts into clinical letters using the exact template format below. Do not deviate from this structure.
+    const patientHeader = [
+      patient_name ? `Patient Name: ${patient_name}` : null,
+      patient_id ? `Patient ID / NHS Number: ${patient_id}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
 
-TEMPLATE FORMAT:
+    const defaultConsultationPrompt = `You are a professional UK clinical documentation assistant generating clinical letters for NHS doctors. Convert consultation transcripts into structured clinical letters following the exact format below.
 
-Diagnosis: [Insert diagnosis based on the transcript]
+${patientHeader ? `\n${patientHeader}\n` : ""}
 
-Plan:
-• [Bullet point 1]
-• [Bullet point 2]
-• [Continue as needed]
+OUTPUT STRUCTURE:
 
-________________________________________
+**Clinical Summary**
 
-Dear Dr [GP Name],
+- **Presenting Complaint:** [Brief summary of the reason for consultation]
+- **Diagnosis/Impression:** [Clinical diagnosis or working impression]
+- **Key Findings:** [Any significant examination or investigation findings]
 
-Thank you for referring this patient...
+**Plan**
 
-[Write all the details of the history in this section as continuous narrative text. No bullet points. Include presenting complaint, relevant history, examination findings, and all clinical details discussed in the consultation.]
+- [Management step 1]
+- [Management step 2]
+- [Medication changes, if any]
+- [Investigations requested, if any]
+- [Follow-up arrangements]
+- [Safety-netting advice given]
 
-[Insert clinical impression]: [Write the plan as a narrative here, incorporating what was discussed, agreed upon, and any follow-up arrangements. Write all the details of the discussion regarding management.]
+---
+
+**Dear Dr [GP Name],**
+
+Thank you for referring [Patient Name / this patient] who I saw [today / on DATE] in clinic.
+
+**History**
+
+[Write the full history as flowing narrative prose. Include presenting complaint, duration, associated symptoms, relevant past medical history, drug history, allergies, family history, and social history as relevant.]
+
+**Examination**
+
+[Write examination findings as flowing narrative. Include relevant positive and negative findings. If no formal examination was performed, omit this section.]
+
+**Investigations**
+
+[List any investigations performed or requested. Include results if discussed. Omit if none.]
+
+**Impression**
+
+[Clinical impression and reasoning, as narrative.]
+
+**Management Plan**
+
+[Narrative description of the management plan, including medications prescribed, investigations requested, advice given, and follow-up arrangements. What was discussed and agreed with the patient.]
+
+Thank you once again for your referral. Please do not hesitate to contact me if you require any further information.
+
+**Kind regards,**
 
 Dr [Doctor Name]
+[Role/Specialty]
+
+---
 
 RULES:
-- The top section (Diagnosis + Plan bullets) is a quick-reference summary
-- The letter body after the line must be flowing narrative text, no bullet points
-- Extract the GP name and doctor name from the transcript if mentioned, otherwise use placeholders
-- Do not fabricate clinical details. If information is unclear, note it appropriately
-- Use formal UK medical letter conventions
-- Be thorough and detailed — include ALL clinical information from the transcript
-- The letter should be comprehensive enough that the GP has a complete picture of the consultation`;
+- Use the structure above exactly, with Markdown-style bold headings
+- The Clinical Summary and Plan sections at the top use bullet points for quick reference
+- The letter body uses flowing narrative prose under each heading (no bullets in History, Examination, Impression)
+- Extract the GP name, doctor name, patient details, and consultation date from the transcript where available; otherwise use bracketed placeholders
+- Never fabricate clinical details. If information is unclear or missing, use "[not documented]" or omit the section
+- Use formal UK medical letter conventions and British English spelling (e.g. "paracetamol", not "acetaminophen")
+- Use UK medication names, NHS terminology, and NICE-consistent language
+- Be thorough: include ALL relevant clinical information from the transcript
+- Do not add a Safeguarding or DVLA note unless explicitly raised in the transcript`;
 
     const defaultDictationPrompt = `You are a professional UK clinical documentation assistant. The following is a dictated clinical note. Clean it up into a well-structured, professional clinical document while preserving all clinical details exactly as dictated.
 
+${patientHeader ? `\n${patientHeader}\n` : ""}
+
+OUTPUT STRUCTURE (use Markdown bold headings; omit sections not covered in the dictation):
+
+**Presenting Complaint**
+[Narrative]
+
+**History of Presenting Complaint**
+[Narrative]
+
+**Past Medical History**
+[Narrative or list]
+
+**Drug History & Allergies**
+[Narrative or list]
+
+**Social History**
+[Narrative]
+
+**Examination**
+[Narrative]
+
+**Investigations**
+[Narrative]
+
+**Impression**
+[Narrative]
+
+**Plan**
+- [Bullet points for actions]
+
 RULES:
 - Correct grammar, punctuation, and formatting but do NOT change clinical meaning
-- Structure the output with clear headings where appropriate (e.g. Presenting Complaint, History, Examination, Impression, Plan)
 - Remove filler words, false starts, and repetitions
-- Use formal UK medical conventions
+- Use formal UK medical conventions and British English spelling
+- Use UK medication names and NHS terminology
 - Do not fabricate or infer any clinical details not present in the dictation
-- Preserve all medical terminology exactly as dictated`;
+- Preserve all medical terminology exactly as dictated
+- If a section is not covered in the dictation, omit it entirely (do not write "not documented")`;
 
     const systemPrompt = profileData?.letter_template
       ? profileData.letter_template
@@ -279,6 +361,8 @@ RULES:
         transcript,
         letter_content: letterContent,
         status: "draft",
+        patient_name: patient_name || null,
+        patient_id: patient_id || null,
       })
       .select()
       .single();
