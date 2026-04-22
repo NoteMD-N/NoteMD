@@ -29,6 +29,7 @@ import {
   Mic,
   List,
   FileText,
+  LayoutTemplate,
   Settings,
   CreditCard,
   LogOut,
@@ -40,6 +41,7 @@ const navItems = [
   { title: "New Recording", icon: Mic, to: "/record", accent: true },
   { title: "Recordings", icon: List, to: "/recordings" },
   { title: "Letters", icon: FileText, to: "/letters" },
+  { title: "Templates", icon: LayoutTemplate, to: "/templates" },
 ];
 
 const AppSidebar = () => {

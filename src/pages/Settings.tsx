@@ -11,8 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
-import { User, Shield, Save, Loader2, FileText } from "lucide-react";
+import { User, Shield, Save, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 const Settings = () => {
@@ -20,7 +19,6 @@ const Settings = () => {
   const queryClient = useQueryClient();
 
   const [fullName, setFullName] = useState("");
-  const [letterTemplate, setLetterTemplate] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -44,9 +42,6 @@ const Settings = () => {
     if (profile?.full_name && !fullName) {
       setFullName(profile.full_name);
     }
-    if (profile?.letter_template !== undefined && profile?.letter_template !== null && !letterTemplate) {
-      setLetterTemplate(profile.letter_template);
-    }
   }, [profile]);
 
   const profileMutation = useMutation({
@@ -64,24 +59,6 @@ const Settings = () => {
     },
     onError: () => {
       toast.error("Failed to update profile");
-    },
-  });
-
-  const templateMutation = useMutation({
-    mutationFn: async (template: string) => {
-      if (!user) throw new Error("Not authenticated");
-      const { error } = await supabase
-        .from("profiles")
-        .update({ letter_template: template || null })
-        .eq("user_id", user.id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["profile"] });
-      toast.success("Letter template saved");
-    },
-    onError: () => {
-      toast.error("Failed to save template");
     },
   });
 
@@ -140,10 +117,6 @@ const Settings = () => {
           <TabsTrigger value="profile" className="gap-2">
             <User className="h-4 w-4" />
             Profile
-          </TabsTrigger>
-          <TabsTrigger value="template" className="gap-2">
-            <FileText className="h-4 w-4" />
-            Letter Template
           </TabsTrigger>
           <TabsTrigger value="security" className="gap-2">
             <Shield className="h-4 w-4" />
@@ -226,60 +199,6 @@ const Settings = () => {
                   </Button>
                 </>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Letter Template Tab */}
-        <TabsContent value="template" className="space-y-6">
-          <Card className="shadow-card">
-            <CardHeader>
-              <CardTitle>Letter Template</CardTitle>
-              <CardDescription>
-                Customise the AI prompt used to generate your clinical letters. Leave blank to use the default template.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="letterTemplate">System Prompt</Label>
-                <Textarea
-                  id="letterTemplate"
-                  value={letterTemplate}
-                  onChange={(e) => setLetterTemplate(e.target.value)}
-                  placeholder="Enter your custom letter generation prompt... Leave blank to use the default clinical letter template."
-                  rows={12}
-                  className="font-mono text-sm"
-                />
-                <p className="text-xs text-muted-foreground">
-                  This prompt instructs the AI how to format and structure letters from your consultation transcripts.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => templateMutation.mutate(letterTemplate)}
-                  disabled={templateMutation.isPending}
-                  className="gap-2"
-                >
-                  {templateMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  Save Template
-                </Button>
-                {letterTemplate && (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setLetterTemplate("");
-                      templateMutation.mutate("");
-                    }}
-                    disabled={templateMutation.isPending}
-                  >
-                    Reset to Default
-                  </Button>
-                )}
-              </div>
             </CardContent>
           </Card>
         </TabsContent>

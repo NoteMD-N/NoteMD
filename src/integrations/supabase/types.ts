@@ -23,6 +23,7 @@ export type Database = {
           patient_name: string | null
           recording_id: string
           status: string
+          template_id: string | null
           transcript: string | null
           updated_at: string
           user_id: string
@@ -35,6 +36,7 @@ export type Database = {
           patient_name?: string | null
           recording_id: string
           status?: string
+          template_id?: string | null
           transcript?: string | null
           updated_at?: string
           user_id: string
@@ -47,6 +49,7 @@ export type Database = {
           patient_name?: string | null
           recording_id?: string
           status?: string
+          template_id?: string | null
           transcript?: string | null
           updated_at?: string
           user_id?: string
@@ -101,6 +104,7 @@ export type Database = {
           patient_id: string | null
           patient_name: string | null
           status: string
+          template_id: string | null
           updated_at: string
           user_id: string
         }
@@ -113,6 +117,7 @@ export type Database = {
           patient_id?: string | null
           patient_name?: string | null
           status?: string
+          template_id?: string | null
           updated_at?: string
           user_id: string
         }
@@ -125,8 +130,48 @@ export type Database = {
           patient_id?: string | null
           patient_name?: string | null
           status?: string
+          template_id?: string | null
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      templates: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_default: boolean
+          is_preset: boolean
+          mode: string
+          name: string
+          prompt: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_default?: boolean
+          is_preset?: boolean
+          mode?: string
+          name: string
+          prompt: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_default?: boolean
+          is_preset?: boolean
+          mode?: string
+          name?: string
+          prompt?: string
+          updated_at?: string
+          user_id?: string | null
         }
         Relationships: []
       }

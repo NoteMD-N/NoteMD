@@ -119,6 +119,7 @@ serve(async (req) => {
       mode,
       patient_name,
       patient_id,
+      template_id,
     } = await req.json();
 
     if (!recording_id) {
@@ -192,12 +193,29 @@ serve(async (req) => {
     }
 
     // Step 2: Generate clinical letter
-    // Check if user has a custom template
-    const { data: profileData } = await supabase
-      .from("profiles")
-      .select("letter_template")
-      .eq("user_id", userId)
-      .single();
+    // Resolve template: explicit template_id → user's default for mode → global preset fallback
+    let chosenTemplate: { id: string; prompt: string; mode: string } | null = null;
+
+    if (template_id) {
+      const { data } = await supabase
+        .from("templates")
+        .select("id, prompt, mode")
+        .eq("id", template_id)
+        .single();
+      if (data) chosenTemplate = data;
+    }
+
+    if (!chosenTemplate) {
+      // Fall back to user's default template for this mode
+      const { data } = await supabase
+        .from("templates")
+        .select("id, prompt, mode")
+        .eq("user_id", userId)
+        .eq("mode", mode || "consultation")
+        .eq("is_default", true)
+        .maybeSingle();
+      if (data) chosenTemplate = data;
+    }
 
     const patientHeader = [
       patient_name ? `Patient Name: ${patient_name}` : null,
@@ -315,8 +333,13 @@ RULES:
 - Preserve all medical terminology exactly as dictated
 - If a section is not covered in the dictation, omit it entirely (do not write "not documented")`;
 
-    const systemPrompt = profileData?.letter_template
-      ? profileData.letter_template
+    // If a template was chosen, prepend patient header so it's always included
+    const templatePrompt = chosenTemplate
+      ? (patientHeader ? `${patientHeader}\n\n${chosenTemplate.prompt}` : chosenTemplate.prompt)
+      : null;
+
+    const systemPrompt = templatePrompt
+      ? templatePrompt
       : mode === "dictation"
       ? defaultDictationPrompt
       : defaultConsultationPrompt;
@@ -363,6 +386,7 @@ RULES:
         status: "draft",
         patient_name: patient_name || null,
         patient_id: patient_id || null,
+        template_id: chosenTemplate?.id || null,
       })
       .select()
       .single();

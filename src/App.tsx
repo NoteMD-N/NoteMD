@@ -13,6 +13,7 @@ import LetterView from "./pages/LetterView";
 import Recordings from "./pages/Recordings";
 import Letters from "./pages/Letters";
 import Settings from "./pages/Settings";
+import Templates from "./pages/Templates";
 import Billing from "./pages/Billing";
 import NotFound from "./pages/NotFound";
 
@@ -47,6 +48,7 @@ const App = () => (
               <Route path="/letters" element={<Letters />} />
               <Route path="/record" element={<Record />} />
               <Route path="/letter/:id" element={<LetterView />} />
+              <Route path="/templates" element={<Templates />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/settings/billing" element={<Billing />} />
             </Route>
