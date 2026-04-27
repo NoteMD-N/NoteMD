@@ -146,6 +146,9 @@ const Record = () => {
   const healthCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isStoppingRef = useRef(false);
   const scheduleReconnectRef = useRef<() => void>(() => {});
+  // Tracks whether the WebSocket dropped during this recording. If true, we'll
+  // re-transcribe the full audio with MedASR on stop to guarantee completeness.
+  const hadDisconnectRef = useRef(false);
 
   // Keep modeRef in sync for use inside async callbacks
   useEffect(() => {
@@ -338,6 +341,8 @@ const Record = () => {
 
   const scheduleReconnect = useCallback(() => {
     if (reconnectTimerRef.current) return; // already scheduled
+    // Mark that a disconnect happened so we can fall back to MedASR re-transcription on stop
+    hadDisconnectRef.current = true;
     setStreamHealth("reconnecting");
 
     const attempt = reconnectAttemptRef.current;
@@ -390,6 +395,7 @@ const Record = () => {
       pendingChunksRef.current = [];
       reconnectAttemptRef.current = 0;
       isStoppingRef.current = false;
+      hadDisconnectRef.current = false;
       setBufferedSeconds(0);
       setStreamHealth("connected");
 
@@ -589,7 +595,17 @@ const Record = () => {
 
   const processAudio = async (audioBlob: Blob, audioTranscript?: string) => {
     setProcessing(true);
-    setProcessingStatus("Preparing recording...");
+
+    // If a disconnect occurred during recording, the live transcript may have gaps.
+    // Discard it and force the server to re-transcribe the full audio with MedASR.
+    const disconnectOccurred = hadDisconnectRef.current;
+    const safeTranscript = disconnectOccurred ? undefined : audioTranscript;
+
+    if (disconnectOccurred) {
+      setProcessingStatus("Connection issues detected — running full transcription for accuracy...");
+    } else {
+      setProcessingStatus("Preparing recording...");
+    }
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -599,7 +615,11 @@ const Record = () => {
       const fileName = `${user.id}/${Date.now()}.${ext}`;
 
       // Create recording row first so we have an ID
-      setProcessingStatus("Creating recording...");
+      setProcessingStatus(
+        disconnectOccurred
+          ? "Saving recording — re-transcribing for accuracy..."
+          : "Creating recording..."
+      );
       const { data: recording, error: recError } = await supabase
         .from("recordings")
         .insert({
@@ -624,34 +644,50 @@ const Record = () => {
           if (error) console.error("Background upload failed:", error);
         });
 
-      // If we have a transcript AND we're in consultation mode, generate letter immediately
-      // For dictation mode, we need MedASR re-transcribe which requires audio in storage first
-      const needsAudioUpload = !audioTranscript || modeRef.current === "dictation";
+      // We need audio in storage when:
+      // - There's no live transcript at all
+      // - We're in dictation mode (MedASR re-transcribe)
+      // - A disconnect happened (forcing full re-transcription via MedASR)
+      const needsAudioUpload =
+        !safeTranscript || modeRef.current === "dictation" || disconnectOccurred;
 
       if (needsAudioUpload) {
-        setProcessingStatus("Uploading audio...");
+        setProcessingStatus(
+          disconnectOccurred
+            ? "Uploading audio for full transcription..."
+            : "Uploading audio..."
+        );
         await uploadPromise;
       }
 
-      setProcessingStatus("Generating clinical letter...");
+      setProcessingStatus(
+        disconnectOccurred
+          ? "Re-transcribing full recording with MedASR..."
+          : "Generating clinical letter..."
+      );
       const { data: fnData, error: fnError } = await supabase.functions.invoke(
         "generate-letter",
         {
           body: {
             recording_id: recording.id,
             audio_path: fileName,
-            transcript: audioTranscript || undefined,
+            transcript: safeTranscript || undefined,
             mode: modeRef.current,
             patient_name: patientName || undefined,
             patient_id: patientId || undefined,
             template_id: selectedTemplateId || undefined,
+            had_disconnect: disconnectOccurred,
           },
         }
       );
 
       if (fnError) throw fnError;
 
-      toast.success("Letter generated successfully!");
+      if (disconnectOccurred) {
+        toast.success("Letter generated using full re-transcription for accuracy");
+      } else {
+        toast.success("Letter generated successfully!");
+      }
       navigate(`/letter/${fnData.letter_id}`);
     } catch (error: any) {
       toast.error(error.message || "Failed to process recording");
@@ -1150,7 +1186,18 @@ const Record = () => {
                 </div>
               </div>
               <div className="p-6">
-                {mode === "dictation" && (
+                {hadDisconnectRef.current && (
+                  <div className="mb-4 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-300 flex gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <div>
+                      <strong>Connection dropped during recording.</strong> The live transcript
+                      below may have gaps. To guarantee a complete letter, the audio will be
+                      re-transcribed in full when you click Generate. This adds a few seconds but
+                      ensures nothing is missed.
+                    </div>
+                  </div>
+                )}
+                {mode === "dictation" && !hadDisconnectRef.current && (
                   <div className="mb-4 px-3 py-2 rounded-md bg-blue-50 dark:bg-blue-950 text-xs text-blue-700 dark:text-blue-400">
                     Note: In dictation mode the audio is re-transcribed with MedASR for accuracy,
                     so edits here are used as a fallback.
