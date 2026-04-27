@@ -15,6 +15,15 @@ import {
   SelectGroup,
   SelectLabel,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
   Mic,
@@ -33,11 +42,15 @@ import {
   ChevronRight,
   ChevronLeft,
   LayoutTemplate,
+  Eye,
+  Pencil,
+  Sparkles,
 } from "lucide-react";
 
 type RecordMode = "consultation" | "dictation";
 type ConnectionQuality = "good" | "fair" | "poor" | "offline";
 type Stage = "record" | "review";
+type StreamHealth = "connected" | "reconnecting" | "disconnected";
 
 type Template = {
   id: string;
@@ -69,6 +82,9 @@ const Record = () => {
   const [interimText, setInterimText] = useState("");
   const [connectionQuality, setConnectionQuality] = useState<ConnectionQuality>("good");
   const [deepgramReady, setDeepgramReady] = useState(false);
+  const [streamHealth, setStreamHealth] = useState<StreamHealth>("connected");
+  const [bufferedSeconds, setBufferedSeconds] = useState(0);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   // Fetch templates
   const { data: templates = [] } = useQuery({
@@ -122,6 +138,14 @@ const Record = () => {
   const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const deepgramKeyRef = useRef<string | null>(null);
   const modeRef = useRef<RecordMode>(mode);
+  // WebSocket reconnection state
+  const pendingChunksRef = useRef<Blob[]>([]); // chunks captured during disconnect
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastMessageAtRef = useRef<number>(Date.now());
+  const healthCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isStoppingRef = useRef(false);
+  const scheduleReconnectRef = useRef<() => void>(() => {});
 
   // Keep modeRef in sync for use inside async callbacks
   useEffect(() => {
@@ -174,8 +198,21 @@ const Record = () => {
     checkConnection();
     const interval = setInterval(checkConnection, 15000);
 
-    const onOnline = () => setConnectionQuality("good");
-    const onOffline = () => setConnectionQuality("offline");
+    const onOnline = () => {
+      setConnectionQuality("good");
+      // If we're recording and the WS is dead, trigger immediate reconnect
+      if (mediaRecorderRef.current &&
+          (mediaRecorderRef.current.state === "recording" || mediaRecorderRef.current.state === "paused") &&
+          (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) {
+        // Reset attempt counter for fast first retry
+        reconnectAttemptRef.current = 0;
+        scheduleReconnectRef.current();
+      }
+    };
+    const onOffline = () => {
+      setConnectionQuality("offline");
+      setStreamHealth("disconnected");
+    };
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
 
@@ -202,8 +239,44 @@ const Record = () => {
     wakeLockRef.current = null;
   }, []);
 
-  const connectDeepgram = useCallback(async (): Promise<WebSocket> => {
-    // Use pre-fetched key if available, else fetch now
+  const attachWebSocketHandlers = useCallback((ws: WebSocket) => {
+    ws.onmessage = (event) => {
+      lastMessageAtRef.current = Date.now();
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "Results" && msg.channel?.alternatives?.[0]) {
+          const alt = msg.channel.alternatives[0];
+          const text = alt.transcript;
+          if (!text) return;
+
+          if (msg.is_final) {
+            transcriptRef.current += (transcriptRef.current ? " " : "") + text;
+            setTranscript(transcriptRef.current);
+            setInterimText("");
+          } else {
+            setInterimText(text);
+          }
+        }
+      } catch (e) {
+        console.error("[Deepgram] Parse error:", e);
+      }
+    };
+
+    ws.onclose = (e) => {
+      console.log("[Deepgram] Closed:", e.code, e.reason);
+      // Trigger reconnection if we're still actively recording (and not deliberately stopping)
+      if (!isStoppingRef.current && mediaRecorderRef.current &&
+          (mediaRecorderRef.current.state === "recording" || mediaRecorderRef.current.state === "paused")) {
+        scheduleReconnect();
+      }
+    };
+
+    ws.onerror = (e) => {
+      console.error("[Deepgram] Error:", e);
+    };
+  }, []);
+
+  const openWebSocket = useCallback(async (): Promise<WebSocket> => {
     let key = deepgramKeyRef.current;
     if (!key) {
       const { data, error } = await supabase.functions.invoke("deepgram-token");
@@ -235,41 +308,75 @@ const Record = () => {
       ws.onopen = () => {
         clearTimeout(timeout);
         console.log("[Deepgram] Connected");
+        lastMessageAtRef.current = Date.now();
         resolve(ws);
       };
 
       ws.onerror = (e) => {
         clearTimeout(timeout);
-        console.error("[Deepgram] Error:", e);
+        console.error("[Deepgram] Connection error:", e);
         reject(new Error("Deepgram connection failed"));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === "Results" && msg.channel?.alternatives?.[0]) {
-            const alt = msg.channel.alternatives[0];
-            const text = alt.transcript;
-            if (!text) return;
-
-            if (msg.is_final) {
-              transcriptRef.current += (transcriptRef.current ? " " : "") + text;
-              setTranscript(transcriptRef.current);
-              setInterimText("");
-            } else {
-              setInterimText(text);
-            }
-          }
-        } catch (e) {
-          console.error("[Deepgram] Parse error:", e);
-        }
-      };
-
-      ws.onclose = (e) => {
-        console.log("[Deepgram] Closed:", e.code, e.reason);
       };
     });
   }, []);
+
+  const flushPendingChunks = useCallback((ws: WebSocket) => {
+    if (pendingChunksRef.current.length === 0) return;
+    console.log(`[Deepgram] Flushing ${pendingChunksRef.current.length} buffered chunks`);
+    for (const chunk of pendingChunksRef.current) {
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(chunk);
+        }
+      } catch (e) {
+        console.error("[Deepgram] Failed to send buffered chunk:", e);
+      }
+    }
+    pendingChunksRef.current = [];
+    setBufferedSeconds(0);
+  }, []);
+
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimerRef.current) return; // already scheduled
+    setStreamHealth("reconnecting");
+
+    const attempt = reconnectAttemptRef.current;
+    // Exponential backoff with cap: 1s, 2s, 4s, 8s, max 10s
+    const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+    console.log(`[Deepgram] Reconnect attempt ${attempt + 1} in ${delay}ms`);
+
+    reconnectTimerRef.current = setTimeout(async () => {
+      reconnectTimerRef.current = null;
+      reconnectAttemptRef.current += 1;
+
+      try {
+        const ws = await openWebSocket();
+        wsRef.current = ws;
+        attachWebSocketHandlers(ws);
+
+        // Replay buffered chunks
+        flushPendingChunks(ws);
+
+        reconnectAttemptRef.current = 0;
+        setStreamHealth("connected");
+        toast.success("Transcription resumed");
+      } catch (err) {
+        console.error("[Deepgram] Reconnect failed:", err);
+        // Try again
+        if (!isStoppingRef.current && mediaRecorderRef.current &&
+            (mediaRecorderRef.current.state === "recording" || mediaRecorderRef.current.state === "paused")) {
+          scheduleReconnect();
+        } else {
+          setStreamHealth("disconnected");
+        }
+      }
+    }, delay);
+  }, [openWebSocket, attachWebSocketHandlers, flushPendingChunks]);
+
+  // Keep ref in sync so window event listeners can call latest scheduleReconnect
+  useEffect(() => {
+    scheduleReconnectRef.current = scheduleReconnect;
+  }, [scheduleReconnect]);
 
   const startRecording = useCallback(async () => {
     if (isStarting) return;
@@ -280,15 +387,21 @@ const Record = () => {
       setInterimText("");
       transcriptRef.current = "";
       elapsedBeforePauseRef.current = 0;
+      pendingChunksRef.current = [];
+      reconnectAttemptRef.current = 0;
+      isStoppingRef.current = false;
+      setBufferedSeconds(0);
+      setStreamHealth("connected");
 
       // Connect Deepgram and get mic in parallel
       const [ws, stream] = await Promise.all([
-        connectDeepgram(),
+        openWebSocket(),
         navigator.mediaDevices.getUserMedia({ audio: true }),
       ]);
       wsRef.current = ws;
       streamRef.current = stream;
       chunksRef.current = [];
+      attachWebSocketHandlers(ws);
 
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
@@ -298,12 +411,25 @@ const Record = () => {
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunksRef.current.push(e.data);
-          // Only stream to Deepgram when recording (not paused)
-          if (ws.readyState === WebSocket.OPEN && recorder.state === "recording") {
-            ws.send(e.data);
+        if (e.data.size === 0) return;
+        chunksRef.current.push(e.data);
+
+        // Only stream to Deepgram when actively recording (not paused)
+        if (recorder.state !== "recording") return;
+
+        const currentWs = wsRef.current;
+        if (currentWs && currentWs.readyState === WebSocket.OPEN) {
+          try {
+            currentWs.send(e.data);
+          } catch (err) {
+            console.error("[Deepgram] Send failed, buffering:", err);
+            pendingChunksRef.current.push(e.data);
+            setBufferedSeconds((s) => s + 0.25);
           }
+        } else {
+          // WebSocket not open — buffer for later replay on reconnect
+          pendingChunksRef.current.push(e.data);
+          setBufferedSeconds((s) => s + 0.25);
         }
       };
 
@@ -324,13 +450,35 @@ const Record = () => {
         );
       }, 1000);
 
-      // Keepalive ping for Deepgram during pauses (every 5s)
+      // KeepAlive ping every 5s — keeps Deepgram session alive during silence/pause
       keepAliveRef.current = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
+        const currentWs = wsRef.current;
+        if (currentWs && currentWs.readyState === WebSocket.OPEN) {
           try {
-            ws.send(JSON.stringify({ type: "KeepAlive" }));
+            currentWs.send(JSON.stringify({ type: "KeepAlive" }));
           } catch {
             /* ignore */
+          }
+        }
+      }, 5000);
+
+      // Health check every 5s — detect stalled connections that haven't formally closed
+      healthCheckRef.current = setInterval(() => {
+        if (isStoppingRef.current) return;
+        const currentWs = wsRef.current;
+        if (!currentWs) return;
+
+        // If socket isn't open OR no message received in last 30s, force reconnect
+        const stale = Date.now() - lastMessageAtRef.current > 30000;
+        const notOpen = currentWs.readyState !== WebSocket.OPEN;
+
+        if (notOpen || stale) {
+          console.warn("[Deepgram] Health check failed:", { notOpen, stale, readyState: currentWs.readyState });
+          try { currentWs.close(); } catch { /* ignore */ }
+          wsRef.current = null;
+          if (mediaRecorderRef.current &&
+              (mediaRecorderRef.current.state === "recording" || mediaRecorderRef.current.state === "paused")) {
+            scheduleReconnect();
           }
         }
       }, 5000);
@@ -339,13 +487,13 @@ const Record = () => {
     } catch (err: any) {
       toast.error(err.message || "Failed to start recording");
       if (wsRef.current) {
-        wsRef.current.close();
+        try { wsRef.current.close(); } catch { /* ignore */ }
         wsRef.current = null;
       }
     } finally {
       setIsStarting(false);
     }
-  }, [connectDeepgram, requestWakeLock, isStarting]);
+  }, [openWebSocket, attachWebSocketHandlers, scheduleReconnect, requestWakeLock, isStarting]);
 
   const pauseRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
@@ -380,10 +528,16 @@ const Record = () => {
   }, []);
 
   const cleanup = useCallback(() => {
+    isStoppingRef.current = true;
+
     if (timerRef.current) clearInterval(timerRef.current);
     if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+    if (healthCheckRef.current) clearInterval(healthCheckRef.current);
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     timerRef.current = null;
     keepAliveRef.current = null;
+    healthCheckRef.current = null;
+    reconnectTimerRef.current = null;
 
     const recorder = mediaRecorderRef.current;
     if (recorder && (recorder.state === "recording" || recorder.state === "paused")) {
@@ -396,16 +550,26 @@ const Record = () => {
 
     streamRef.current?.getTracks().forEach((t) => t.stop());
 
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    // Try to flush any final buffered chunks before closing
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
       try {
-        wsRef.current.send(JSON.stringify({ type: "CloseStream" }));
+        // Drain pending chunks if any
+        for (const chunk of pendingChunksRef.current) {
+          try { ws.send(chunk); } catch { /* ignore */ }
+        }
+        pendingChunksRef.current = [];
+        ws.send(JSON.stringify({ type: "CloseStream" }));
       } catch {
         /* ignore */
       }
       setTimeout(() => {
-        wsRef.current?.close();
+        try { wsRef.current?.close(); } catch { /* ignore */ }
         wsRef.current = null;
       }, 500);
+    } else if (ws) {
+      try { ws.close(); } catch { /* ignore */ }
+      wsRef.current = null;
     }
   }, []);
 
@@ -654,42 +818,72 @@ const Record = () => {
                     Manage templates
                   </Link>
                 </div>
-                <Select
-                  value={selectedTemplateId || ""}
-                  onValueChange={(v) => setSelectedTemplateId(v)}
-                  disabled={!canEditPatient}
-                >
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select a template" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {myTemplatesForMode.length > 0 && (
-                      <SelectGroup>
-                        <SelectLabel>My Templates</SelectLabel>
-                        {myTemplatesForMode.map((t) => (
-                          <SelectItem key={t.id} value={t.id}>
-                            {t.name}
-                            {t.is_default ? " ★" : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    )}
-                    {presetTemplatesForMode.length > 0 && (
-                      <SelectGroup>
-                        <SelectLabel>Presets</SelectLabel>
-                        {presetTemplatesForMode.map((t) => (
-                          <SelectItem key={t.id} value={t.id}>
-                            {t.name}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    )}
-                  </SelectContent>
-                </Select>
+                <div className="flex gap-2">
+                  <Select
+                    value={selectedTemplateId || ""}
+                    onValueChange={(v) => setSelectedTemplateId(v)}
+                    disabled={!canEditPatient}
+                  >
+                    <SelectTrigger className="h-9 flex-1">
+                      <SelectValue placeholder="Select a template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {myTemplatesForMode.length > 0 && (
+                        <SelectGroup>
+                          <SelectLabel>My Templates</SelectLabel>
+                          {myTemplatesForMode.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>
+                              {t.name}
+                              {t.is_default ? " ★" : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      )}
+                      {presetTemplatesForMode.length > 0 && (
+                        <SelectGroup>
+                          <SelectLabel>Presets</SelectLabel>
+                          {presetTemplatesForMode.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>
+                              {t.name}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPreviewOpen(true)}
+                    disabled={!selectedTemplate}
+                    title="Preview template structure"
+                    className="h-9 px-3"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigate("/templates")}
+                    title={selectedTemplate?.is_preset ? "Clone & edit this template" : "Edit this template"}
+                    className="h-9 px-3"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                </div>
                 {selectedTemplate?.description && (
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     {selectedTemplate.description}
                   </p>
+                )}
+                {myTemplatesForMode.length === 0 && (
+                  <div className="text-xs text-slate-500 dark:text-slate-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-md p-2 mt-1">
+                    None of these suit your style?{" "}
+                    <Link to="/templates" className="text-primary hover:underline font-medium">
+                      Create your own template
+                    </Link>{" "}
+                    or clone a preset to customise.
+                  </div>
                 )}
               </div>
             </div>
@@ -862,13 +1056,25 @@ const Record = () => {
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Live Transcript
                 </h3>
-                {isRecording && !isPaused && (
+                {isRecording && !isPaused && streamHealth === "connected" && (
                   <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                     </span>
                     Listening
+                  </span>
+                )}
+                {isRecording && streamHealth === "reconnecting" && (
+                  <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Reconnecting{bufferedSeconds > 0 ? ` — ${Math.ceil(bufferedSeconds)}s buffered` : "..."}
+                  </span>
+                )}
+                {isRecording && streamHealth === "disconnected" && (
+                  <span className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+                    <WifiOff className="h-3 w-3" />
+                    Offline — audio still being captured locally
                   </span>
                 )}
                 {isPaused && (
@@ -973,6 +1179,61 @@ const Record = () => {
           )}
         </div>
       </div>
+
+      {/* Template preview dialog */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 flex-wrap">
+              {selectedTemplate?.name}
+              {selectedTemplate?.is_preset && (
+                <Badge variant="outline" className="text-xs">Preset</Badge>
+              )}
+              {selectedTemplate?.is_default && (
+                <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20 text-xs">
+                  Default
+                </Badge>
+              )}
+            </DialogTitle>
+            {selectedTemplate?.description && (
+              <DialogDescription>{selectedTemplate.description}</DialogDescription>
+            )}
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+              <FileText className="h-3.5 w-3.5" />
+              This is the prompt the AI will use to format your letter:
+            </div>
+            <pre className="text-xs whitespace-pre-wrap leading-relaxed p-4 bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800 max-h-[50vh] overflow-y-auto font-mono">
+              {selectedTemplate?.prompt}
+            </pre>
+            <div className="text-xs text-slate-500 dark:text-slate-400 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-md p-3 flex gap-2">
+              <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+              <div>
+                <strong>AI scope:</strong> The AI assists with formatting, structure, summarisation,
+                and grammar only. It will not provide medical advice or invent clinical details.
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={() => setPreviewOpen(false)}>
+              Close
+            </Button>
+            <Button
+              onClick={() => {
+                setPreviewOpen(false);
+                navigate("/templates");
+              }}
+              className="gap-2"
+            >
+              <Pencil className="h-4 w-4" />
+              {selectedTemplate?.is_preset ? "Clone & Edit" : "Edit Template"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

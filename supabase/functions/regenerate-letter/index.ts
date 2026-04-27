@@ -38,7 +38,7 @@ serve(async (req) => {
       });
     }
 
-    const { letter_id, instructions, template_id } = await req.json();
+    const { letter_id, instructions, template_id, fast } = await req.json();
     if (!letter_id || !instructions) {
       throw new Error("letter_id and instructions are required");
     }
@@ -50,6 +50,16 @@ serve(async (req) => {
       .eq("id", letter_id)
       .single();
     if (letterErr || !letter) throw new Error("Letter not found");
+
+    // Safety scope clause prepended to every system prompt
+    const SAFETY_CLAUSE = `IMPORTANT — SCOPE OF YOUR ROLE:
+- Your role is limited to formatting, structuring, summarising, and correcting grammar/spelling.
+- Do NOT provide medical advice, recommendations, diagnoses, or clinical opinions beyond what the clinician has stated in the source material.
+- Do NOT add medications, dosages, investigations, or follow-up arrangements that are not present in the source.
+- If a clinical detail is unclear or missing, do not invent it. Use [unclear] or omit gracefully.
+- The clinician is responsible for all clinical content; you assist only with documentation quality.
+
+`;
 
     // If template_id provided, load that template's prompt as the system prompt
     let systemPrompt: string;
@@ -65,6 +75,8 @@ serve(async (req) => {
       systemPrompt =
         "You are a professional UK clinical documentation assistant. You are refining an existing clinical letter based on specific instructions from the clinician. Preserve all clinical content and accuracy. Apply only the changes requested. Use UK English and NHS terminology.";
     }
+
+    systemPrompt = SAFETY_CLAUSE + systemPrompt;
 
     const patientHeader = [
       letter.patient_name ? `Patient Name: ${letter.patient_name}` : null,
@@ -92,7 +104,8 @@ Please produce the revised letter. Return only the letter text with no preamble 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o",
+        // Fast model for quick refinements (grammar, structure, simple changes); full model for template switches and big rewrites
+        model: fast ? "gpt-4o-mini" : "gpt-4o",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },

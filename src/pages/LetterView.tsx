@@ -102,7 +102,7 @@ const LetterView = () => {
     toast.success("Copied to clipboard");
   };
 
-  const handleRegenerate = async (overrideInstructions?: string) => {
+  const handleRegenerate = async (overrideInstructions?: string, fast?: boolean) => {
     const toSend = overrideInstructions ?? instructions;
     if (!letter || !toSend.trim()) return;
     setRegenerating(true);
@@ -113,6 +113,9 @@ const LetterView = () => {
           letter_id: letter.id,
           instructions: toSend.trim(),
           template_id: regenTemplateId !== "keep" ? regenTemplateId : undefined,
+          // Use faster model for quick prompts (small refinements). Custom instructions and template
+          // switches use the full model for higher quality.
+          fast: fast === true,
         },
       });
 
@@ -216,6 +219,14 @@ const LetterView = () => {
               Describe what you'd like to change, or pick a template to rewrite in a different
               format.
             </p>
+            <div className="text-xs text-slate-600 dark:text-slate-400 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-md p-2.5 flex gap-2 mt-2">
+              <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+              <div>
+                <strong>AI scope:</strong> The AI assists with formatting, structure, summarisation,
+                and grammar only. It will not provide medical advice, recommendations, or invent
+                clinical details. You remain responsible for all clinical content.
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             {/* Quick prompts */}
@@ -223,7 +234,7 @@ const LetterView = () => {
               {QUICK_PROMPTS.map((p) => (
                 <button
                   key={p}
-                  onClick={() => handleRegenerate(p)}
+                  onClick={() => handleRegenerate(p, true)}
                   disabled={regenerating}
                   className="px-3 py-1.5 rounded-full text-xs border border-border bg-background hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >

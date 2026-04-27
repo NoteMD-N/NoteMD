@@ -333,16 +333,28 @@ RULES:
 - Preserve all medical terminology exactly as dictated
 - If a section is not covered in the dictation, omit it entirely (do not write "not documented")`;
 
+    // Safety scope clause prepended to every system prompt
+    const SAFETY_CLAUSE = `IMPORTANT — SCOPE OF YOUR ROLE:
+- Your role is limited to formatting, structuring, summarising, and correcting grammar/spelling.
+- Do NOT provide medical advice, recommendations, diagnoses, or clinical opinions beyond what the clinician has stated in the source material.
+- Do NOT add medications, dosages, investigations, or follow-up arrangements that are not present in the source.
+- If a clinical detail is unclear or missing, do not invent it. Use [unclear] or omit gracefully.
+- The clinician is responsible for all clinical content; you assist only with documentation quality.
+
+`;
+
     // If a template was chosen, prepend patient header so it's always included
     const templatePrompt = chosenTemplate
       ? (patientHeader ? `${patientHeader}\n\n${chosenTemplate.prompt}` : chosenTemplate.prompt)
       : null;
 
-    const systemPrompt = templatePrompt
+    const basePrompt = templatePrompt
       ? templatePrompt
       : mode === "dictation"
       ? defaultDictationPrompt
       : defaultConsultationPrompt;
+
+    const systemPrompt = SAFETY_CLAUSE + basePrompt;
 
     const userPrompt = mode === "dictation"
       ? `Please clean up the following dictated clinical note:\n\n${transcript}`
