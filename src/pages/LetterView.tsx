@@ -103,16 +103,30 @@ const LetterView = () => {
   };
 
   const handleRegenerate = async (overrideInstructions?: string, fast?: boolean) => {
-    const toSend = overrideInstructions ?? instructions;
-    if (!letter || !toSend.trim()) return;
+    if (!letter) return;
+
+    const userInstructions = (overrideInstructions ?? instructions).trim();
+    const templateChanged = regenTemplateId !== "keep";
+
+    // Allow regeneration if user provided instructions OR changed the template (or both).
+    if (!userInstructions && !templateChanged) {
+      toast.error("Add instructions or change the template to regenerate");
+      return;
+    }
+
+    // If only a template change with no explicit instructions, send a default instruction
+    // telling the AI to reformat using the new template's structure.
+    const finalInstructions = userInstructions ||
+      "Reformat the existing letter using the structure and conventions defined in the system prompt above. Preserve all clinical content; do not add or remove information.";
+
     setRegenerating(true);
 
     try {
       const { data, error } = await supabase.functions.invoke("regenerate-letter", {
         body: {
           letter_id: letter.id,
-          instructions: toSend.trim(),
-          template_id: regenTemplateId !== "keep" ? regenTemplateId : undefined,
+          instructions: finalInstructions,
+          template_id: templateChanged ? regenTemplateId : undefined,
           // Use faster model for quick prompts (small refinements). Custom instructions and template
           // switches use the full model for higher quality.
           fast: fast === true,

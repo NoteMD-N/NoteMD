@@ -61,22 +61,27 @@ serve(async (req) => {
 
 `;
 
-    // If template_id provided, load that template's prompt as the system prompt
-    let systemPrompt: string;
+    // Always frame this as a refinement task. If a template is provided,
+    // it goes in as additional structural guidance — not as the primary system prompt.
+    // This avoids the conflict where the template's "transcript → letter" wording
+    // fights with the "refine existing letter" task.
+    const REFINEMENT_BASE = `You are a professional UK clinical documentation assistant. Your task is to REFINE an existing clinical letter that has already been written. You are not generating a new letter from a transcript — you are editing the letter below according to the clinician's instructions.
+
+Preserve all clinical content and accuracy. Apply the changes requested. Use UK English and NHS terminology. Return only the revised letter text with no preamble, headings like "Revised Letter:", or commentary.`;
+
+    let templateGuidance = "";
     if (template_id) {
       const { data: tmpl } = await supabase
         .from("templates")
-        .select("prompt")
+        .select("prompt, name")
         .eq("id", template_id)
         .single();
-      systemPrompt = tmpl?.prompt ||
-        "You are a professional UK clinical documentation assistant.";
-    } else {
-      systemPrompt =
-        "You are a professional UK clinical documentation assistant. You are refining an existing clinical letter based on specific instructions from the clinician. Preserve all clinical content and accuracy. Apply only the changes requested. Use UK English and NHS terminology.";
+      if (tmpl?.prompt) {
+        templateGuidance = `\n\nADDITIONAL STRUCTURAL GUIDANCE — reformat the letter to follow this template's structure and conventions (preserve all clinical detail; only change formatting/structure):\n\n${tmpl.prompt}`;
+      }
     }
 
-    systemPrompt = SAFETY_CLAUSE + systemPrompt;
+    const systemPrompt = SAFETY_CLAUSE + REFINEMENT_BASE + templateGuidance;
 
     const patientHeader = [
       letter.patient_name ? `Patient Name: ${letter.patient_name}` : null,
@@ -85,17 +90,17 @@ serve(async (req) => {
       .filter(Boolean)
       .join("\n");
 
-    const userPrompt = `${patientHeader ? `${patientHeader}\n\n` : ""}CURRENT LETTER:
+    const userPrompt = `${patientHeader ? `${patientHeader}\n\n` : ""}EXISTING LETTER (refine this):
 
 ${letter.letter_content}
 
-${letter.transcript ? `\nORIGINAL TRANSCRIPT (for reference):\n\n${letter.transcript}\n` : ""}
+${letter.transcript ? `\nORIGINAL TRANSCRIPT (for clinical reference only — do not regenerate from this):\n\n${letter.transcript}\n` : ""}
 
-INSTRUCTIONS FROM THE CLINICIAN:
+INSTRUCTIONS:
 
 ${instructions}
 
-Please produce the revised letter. Return only the letter text with no preamble or commentary.`;
+Return only the revised letter text. No preamble, no commentary, no "Here is the revised letter:" — just the letter itself.`;
 
     const gptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",

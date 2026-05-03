@@ -253,8 +253,12 @@ const Record = () => {
           if (!text) return;
 
           if (msg.is_final) {
-            transcriptRef.current += (transcriptRef.current ? " " : "") + text;
-            setTranscript(transcriptRef.current);
+            // Append to whatever is currently on screen so user edits during recording are preserved
+            setTranscript((prev) => {
+              const next = prev + (prev ? " " : "") + text;
+              transcriptRef.current = next;
+              return next;
+            });
             setInterimText("");
           } else {
             setInterimText(text);
@@ -645,11 +649,10 @@ const Record = () => {
         });
 
       // We need audio in storage when:
-      // - There's no live transcript at all
-      // - We're in dictation mode (MedASR re-transcribe)
+      // - There's no live transcript at all (uploaded file, or no Deepgram capture)
       // - A disconnect happened (forcing full re-transcription via MedASR)
-      const needsAudioUpload =
-        !safeTranscript || modeRef.current === "dictation" || disconnectOccurred;
+      // (Dictation mode no longer forces MedASR — user edits the live transcript directly)
+      const needsAudioUpload = !safeTranscript || disconnectOccurred;
 
       if (needsAudioUpload) {
         setProcessingStatus(
@@ -1120,27 +1123,31 @@ const Record = () => {
                 )}
               </div>
 
-              <div className="flex-1 min-h-[300px] max-h-[500px] overflow-y-auto p-6">
-                {hasTranscript ? (
-                  <div className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">
-                    {transcript}
-                    {interimText && (
-                      <span className="text-slate-400 dark:text-slate-500">
-                        {transcript ? " " : ""}
-                        {interimText}
-                      </span>
-                    )}
-                    <div ref={transcriptEndRef} />
+              <div className="flex-1 min-h-[300px] max-h-[500px] overflow-y-auto p-4 flex flex-col">
+                <Textarea
+                  value={transcript}
+                  onChange={(e) => {
+                    setTranscript(e.target.value);
+                    transcriptRef.current = e.target.value;
+                  }}
+                  placeholder={
+                    isRecording
+                      ? "Waiting for speech..."
+                      : "Transcript will appear here as you speak. You can edit at any time — even while recording."
+                  }
+                  className="flex-1 min-h-[260px] resize-none border-0 shadow-none focus-visible:ring-0 px-2 text-sm leading-relaxed bg-transparent"
+                />
+                {interimText && (
+                  <div className="px-2 pb-2 text-sm leading-relaxed text-slate-400 dark:text-slate-500 italic border-t border-slate-100 dark:border-slate-800 pt-2 mt-1">
+                    <span className="text-xs uppercase tracking-wide font-medium mr-2">
+                      Hearing now:
+                    </span>
+                    {interimText}
                   </div>
-                ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <p className="text-sm text-slate-400 dark:text-slate-500 text-center">
-                      {isRecording
-                        ? "Waiting for speech..."
-                        : mode === "dictation"
-                        ? "Dictation mode — MedASR will re-transcribe for highest accuracy"
-                        : "Transcript will appear here as you speak"}
-                    </p>
+                )}
+                {isRecording && transcript && (
+                  <div className="px-2 pt-2 text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 mt-1">
+                    Tip: you can edit the text above any time — new words will append at the end.
                   </div>
                 )}
               </div>
@@ -1195,12 +1202,6 @@ const Record = () => {
                       re-transcribed in full when you click Generate. This adds a few seconds but
                       ensures nothing is missed.
                     </div>
-                  </div>
-                )}
-                {mode === "dictation" && !hadDisconnectRef.current && (
-                  <div className="mb-4 px-3 py-2 rounded-md bg-blue-50 dark:bg-blue-950 text-xs text-blue-700 dark:text-blue-400">
-                    Note: In dictation mode the audio is re-transcribed with MedASR for accuracy,
-                    so edits here are used as a fallback.
                   </div>
                 )}
                 <Textarea

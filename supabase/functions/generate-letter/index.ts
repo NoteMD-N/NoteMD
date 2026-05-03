@@ -128,11 +128,12 @@ serve(async (req) => {
 
     let transcript: string;
 
-    // For dictation mode, always use MedASR for highest accuracy (re-transcribe even if Deepgram transcript exists)
-    const shouldUseMedAsr = mode === "dictation" || !preBuiltTranscript;
+    // Use the supplied (live + user-edited) transcript when available. MedASR is only used as a
+    // fallback when there's no transcript (e.g. uploaded audio file with no live capture, or
+    // signal-drop fallback path triggered client-side by passing transcript=undefined).
+    const shouldUseMedAsr = !preBuiltTranscript;
 
-    if (preBuiltTranscript && !shouldUseMedAsr) {
-      // Consultation mode: use Deepgram transcript directly
+    if (!shouldUseMedAsr) {
       transcript = preBuiltTranscript;
       await supabase
         .from("recordings")
