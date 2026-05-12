@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -61,6 +62,7 @@ type Template = {
 const Templates = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
@@ -70,6 +72,23 @@ const Templates = () => {
   const [formDescription, setFormDescription] = useState("");
   const [formPrompt, setFormPrompt] = useState("");
   const [formMode, setFormMode] = useState<"consultation" | "dictation">("consultation");
+
+  // Open editor automatically if URL has ?new=consultation or ?new=dictation
+  useEffect(() => {
+    const newMode = searchParams.get("new");
+    if (newMode === "consultation" || newMode === "dictation") {
+      setFormName("");
+      setFormDescription("");
+      setFormPrompt("");
+      setFormMode(newMode);
+      setEditingTemplate(null);
+      setEditorOpen(true);
+      // Clear the param so refresh doesn't re-open
+      searchParams.delete("new");
+      setSearchParams(searchParams, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ["templates", user?.id],
@@ -87,12 +106,20 @@ const Templates = () => {
 
   const presets = templates.filter((t) => t.is_preset);
   const myTemplates = templates.filter((t) => !t.is_preset);
+  const myConsultationTemplates = myTemplates.filter((t) => t.mode !== "dictation");
+  const myDictationTemplates = myTemplates.filter((t) => t.mode === "dictation");
+  const presetConsultation = presets.filter((t) => t.mode !== "dictation");
+  const presetDictation = presets.filter((t) => t.mode === "dictation");
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Not authenticated");
       if (!formName.trim()) throw new Error("Name is required");
       if (!formPrompt.trim()) throw new Error("Prompt is required");
+
+      // Defensive: normalise mode value so it can only be one of the two valid options
+      const safeMode: "consultation" | "dictation" =
+        formMode === "dictation" ? "dictation" : "consultation";
 
       if (editingTemplate && !editingTemplate.is_preset) {
         // Update existing
@@ -102,10 +129,11 @@ const Templates = () => {
             name: formName.trim(),
             description: formDescription.trim() || null,
             prompt: formPrompt.trim(),
-            mode: formMode,
+            mode: safeMode,
           })
           .eq("id", editingTemplate.id);
         if (error) throw error;
+        return safeMode;
       } else {
         // Create new
         const { error } = await supabase.from("templates").insert({
@@ -113,17 +141,23 @@ const Templates = () => {
           name: formName.trim(),
           description: formDescription.trim() || null,
           prompt: formPrompt.trim(),
-          mode: formMode,
+          mode: safeMode,
           is_preset: false,
         });
         if (error) throw error;
+        return safeMode;
       }
     },
-    onSuccess: () => {
+    onSuccess: (savedMode) => {
       queryClient.invalidateQueries({ queryKey: ["templates"] });
       setEditorOpen(false);
       resetForm();
-      toast.success(editingTemplate ? "Template updated" : "Template created");
+      const modeLabel = savedMode === "dictation" ? "Dictation" : "Consultation";
+      toast.success(
+        editingTemplate
+          ? `Template updated (${modeLabel})`
+          : `${modeLabel} template created`
+      );
     },
     onError: (err: any) => {
       toast.error(err.message || "Failed to save template");
@@ -208,20 +242,96 @@ const Templates = () => {
     </Badge>
   );
 
+  const TemplateRow = ({ t }: { t: Template }) => (
+    <div
+      key={t.id}
+      className="flex items-start justify-between gap-4 p-4 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap mb-1">
+          <h4 className="font-medium">{t.name}</h4>
+          <ModeBadge mode={t.mode} />
+          {t.is_default && (
+            <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20 gap-1">
+              <Star className="h-3 w-3 fill-current" />
+              Default
+            </Badge>
+          )}
+        </div>
+        {t.description && (
+          <p className="text-sm text-muted-foreground line-clamp-2">
+            {t.description}
+          </p>
+        )}
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        {!t.is_default && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDefaultMutation.mutate({ id: t.id, mode: t.mode })}
+            title="Set as default for this mode"
+          >
+            <Star className="h-4 w-4" />
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => openEdit(t)}
+          title="Edit"
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setDeleteTarget(t)}
+          title="Delete"
+          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+
+  const PresetRow = ({ t }: { t: Template }) => (
+    <div
+      key={t.id}
+      className="flex items-start justify-between gap-4 p-4 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap mb-1">
+          <FileText className="h-4 w-4 text-muted-foreground" />
+          <h4 className="font-medium">{t.name}</h4>
+          <ModeBadge mode={t.mode} />
+        </div>
+        {t.description && (
+          <p className="text-sm text-muted-foreground">{t.description}</p>
+        )}
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => openCloneFromPreset(t)}
+        className="gap-2 shrink-0"
+      >
+        <Copy className="h-3.5 w-3.5" />
+        Clone
+      </Button>
+    </div>
+  );
+
   return (
     <div className="p-6 space-y-6 max-w-5xl">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="font-heading text-2xl font-bold text-foreground">Letter Templates</h2>
-          <p className="text-sm text-muted-foreground">
-            Customise how your clinical letters are generated. Each template is a prompt that
-            guides the AI's formatting, tone, and structure.
-          </p>
-        </div>
-        <Button onClick={openNew} className="gap-2">
-          <Plus className="h-4 w-4" />
-          New Template
-        </Button>
+      <div>
+        <h2 className="font-heading text-2xl font-bold text-foreground">Letter Templates</h2>
+        <p className="text-sm text-muted-foreground">
+          Customise how your clinical letters are generated. Each template is a prompt that
+          guides the AI's formatting, tone, and structure. Templates are organised by mode —
+          dictation templates only show in dictation mode and vice versa.
+        </p>
       </div>
 
       {isLoading ? (
@@ -231,118 +341,126 @@ const Templates = () => {
         </div>
       ) : (
         <>
-          {/* My Templates */}
+          {/* My Consultation Templates */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">My Templates</CardTitle>
-              <CardDescription>
-                Templates you've created or customised. Star one per mode to make it your default.
-              </CardDescription>
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Stethoscope className="h-4 w-4" />
+                    My Consultation Templates
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    Used when recording a full consultation. Star one to make it your default.
+                  </CardDescription>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setFormName("");
+                    setFormDescription("");
+                    setFormPrompt("");
+                    setFormMode("consultation");
+                    setEditingTemplate(null);
+                    setEditorOpen(true);
+                  }}
+                  className="gap-2"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
-              {myTemplates.length === 0 ? (
-                <div className="text-center py-8 text-sm text-muted-foreground">
-                  No custom templates yet. Create one from scratch or clone a preset below.
+              {myConsultationTemplates.length === 0 ? (
+                <div className="text-center py-6 text-sm text-muted-foreground">
+                  No custom consultation templates yet. Create one or clone a preset below.
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {myTemplates.map((t) => (
-                    <div
-                      key={t.id}
-                      className="flex items-start justify-between gap-4 p-4 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap mb-1">
-                          <h4 className="font-medium">{t.name}</h4>
-                          <ModeBadge mode={t.mode} />
-                          {t.is_default && (
-                            <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20 gap-1">
-                              <Star className="h-3 w-3 fill-current" />
-                              Default
-                            </Badge>
-                          )}
-                        </div>
-                        {t.description && (
-                          <p className="text-sm text-muted-foreground line-clamp-2">
-                            {t.description}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {!t.is_default && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              setDefaultMutation.mutate({ id: t.id, mode: t.mode })
-                            }
-                            title="Set as default for this mode"
-                          >
-                            <Star className="h-4 w-4" />
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEdit(t)}
-                          title="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteTarget(t)}
-                          title="Delete"
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                  {myConsultationTemplates.map((t) => <TemplateRow key={t.id} t={t} />)}
                 </div>
               )}
             </CardContent>
           </Card>
 
-          {/* Presets */}
+          {/* My Dictation Templates */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Preset Templates</CardTitle>
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <PenLine className="h-4 w-4" />
+                    My Dictation Templates
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    Used when dictating clinical notes. Star one to make it your default.
+                  </CardDescription>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setFormName("");
+                    setFormDescription("");
+                    setFormPrompt("");
+                    setFormMode("dictation");
+                    setEditingTemplate(null);
+                    setEditorOpen(true);
+                  }}
+                  className="gap-2"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {myDictationTemplates.length === 0 ? (
+                <div className="text-center py-6 text-sm text-muted-foreground">
+                  No custom dictation templates yet. Create one or clone a preset below.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {myDictationTemplates.map((t) => <TemplateRow key={t.id} t={t} />)}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Preset Consultation Templates */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Stethoscope className="h-4 w-4" />
+                Preset Consultation Templates
+              </CardTitle>
               <CardDescription>
-                Starting points maintained by NoteMD. Clone any preset to customise it for your
-                own use.
+                Starting points maintained by NoteMD. Clone any preset to customise it.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {presets.map((t) => (
-                  <div
-                    key={t.id}
-                    className="flex items-start justify-between gap-4 p-4 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                        <h4 className="font-medium">{t.name}</h4>
-                        <ModeBadge mode={t.mode} />
-                      </div>
-                      {t.description && (
-                        <p className="text-sm text-muted-foreground">{t.description}</p>
-                      )}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openCloneFromPreset(t)}
-                      className="gap-2 shrink-0"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      Clone
-                    </Button>
-                  </div>
-                ))}
+                {presetConsultation.map((t) => <PresetRow key={t.id} t={t} />)}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Preset Dictation Templates */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <PenLine className="h-4 w-4" />
+                Preset Dictation Templates
+              </CardTitle>
+              <CardDescription>
+                Starting points maintained by NoteMD. Clone any preset to customise it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {presetDictation.map((t) => <PresetRow key={t.id} t={t} />)}
               </div>
             </CardContent>
           </Card>
@@ -424,7 +542,7 @@ const Templates = () => {
               className="gap-2"
             >
               {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Save Template
+              Save as {formMode === "dictation" ? "Dictation" : "Consultation"} Template
             </Button>
           </DialogFooter>
         </DialogContent>

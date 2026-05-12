@@ -78,9 +78,13 @@ const Letters = () => {
   };
 
   const filtered = letters.filter((l) => {
+    const q = search.toLowerCase();
     const matchesSearch =
-      l.id.toLowerCase().includes(search.toLowerCase()) ||
-      (l.letter_content || "").toLowerCase().includes(search.toLowerCase());
+      !q ||
+      l.id.toLowerCase().includes(q) ||
+      (l.letter_content || "").toLowerCase().includes(q) ||
+      (l.patient_name || "").toLowerCase().includes(q) ||
+      (l.patient_id || "").toLowerCase().includes(q);
     const matchesStatus = statusFilter === "all" || l.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -99,7 +103,7 @@ const Letters = () => {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search by ID or content..."
+            placeholder="Search by patient name, ID, or content..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -143,38 +147,41 @@ const Letters = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ID</TableHead>
+                  <TableHead>Patient</TableHead>
+                  <TableHead>Patient ID / NHS No.</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Recording</TableHead>
                   <TableHead className="hidden md:table-cell">Preview</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.map((letter) => {
-                  const recording = letter.recordings as any;
                   return (
                     <TableRow key={letter.id}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {letter.id.slice(0, 8)}
+                      <TableCell>
+                        {letter.patient_name ? (
+                          <span className="font-medium">{letter.patient_name}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground italic">Not set</span>
+                        )}
                       </TableCell>
-                      <TableCell>{format(new Date(letter.created_at), "dd MMM yyyy, HH:mm")}</TableCell>
+                      <TableCell>
+                        {letter.patient_id ? (
+                          <span className="font-mono text-xs">{letter.patient_id}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground italic">Not set</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {format(new Date(letter.created_at), "dd MMM yyyy, HH:mm")}
+                      </TableCell>
                       <TableCell>
                         <Badge variant="secondary" className={statusColors[letter.status] || ""}>
                           {letter.status}
                         </Badge>
                       </TableCell>
-                      <TableCell>
-                        {recording?.id ? (
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {recording.id.slice(0, 8)}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">--</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell max-w-[200px]">
+                      <TableCell className="hidden md:table-cell max-w-[240px]">
                         <p className="text-xs text-muted-foreground truncate">
                           {letter.letter_content?.slice(0, 80) || "--"}
                         </p>

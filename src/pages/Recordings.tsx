@@ -80,7 +80,12 @@ const Recordings = () => {
   });
 
   const filtered = recordings.filter((rec) => {
-    const matchesSearch = rec.id.toLowerCase().includes(search.toLowerCase());
+    const q = search.toLowerCase();
+    const matchesSearch =
+      !q ||
+      rec.id.toLowerCase().includes(q) ||
+      (rec.patient_name || "").toLowerCase().includes(q) ||
+      (rec.patient_id || "").toLowerCase().includes(q);
     const matchesStatus = statusFilter === "all" || rec.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -99,7 +104,7 @@ const Recordings = () => {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search by ID..."
+            placeholder="Search by patient name or ID..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -149,7 +154,8 @@ const Recordings = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ID</TableHead>
+                  <TableHead>Patient</TableHead>
+                  <TableHead>Patient ID / NHS No.</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Duration</TableHead>
                   <TableHead>Status</TableHead>
@@ -163,10 +169,23 @@ const Recordings = () => {
                   const letter = linkedLetters?.[0];
                   return (
                     <TableRow key={rec.id}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {rec.id.slice(0, 8)}
+                      <TableCell>
+                        {rec.patient_name ? (
+                          <span className="font-medium">{rec.patient_name}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground italic">Not set</span>
+                        )}
                       </TableCell>
-                      <TableCell>{format(new Date(rec.created_at), "dd MMM yyyy, HH:mm")}</TableCell>
+                      <TableCell>
+                        {rec.patient_id ? (
+                          <span className="font-mono text-xs">{rec.patient_id}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground italic">Not set</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {format(new Date(rec.created_at), "dd MMM yyyy, HH:mm")}
+                      </TableCell>
                       <TableCell className="font-mono text-sm">
                         {formatDuration(rec.duration_seconds)}
                       </TableCell>
@@ -183,7 +202,7 @@ const Recordings = () => {
                             className="h-auto p-0 text-xs font-mono"
                             onClick={() => navigate(`/letter/${letter.id}`)}
                           >
-                            {letter.id.slice(0, 8)}
+                            View
                           </Button>
                         ) : (
                           <span className="text-xs text-muted-foreground">--</span>

@@ -611,6 +611,18 @@ const Record = () => {
       setProcessingStatus("Preparing recording...");
     }
 
+    let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
+    let navigated = false;
+    const navigateOnce = (letterId: string) => {
+      if (navigated) return;
+      navigated = true;
+      if (realtimeChannel) {
+        supabase.removeChannel(realtimeChannel);
+        realtimeChannel = null;
+      }
+      navigate(`/letter/${letterId}`);
+    };
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
@@ -640,6 +652,29 @@ const Record = () => {
         .single();
       if (recError) throw recError;
 
+      // Set up Realtime subscription as a backstop. Even if the fetch response below is dropped
+      // (laptop sleep, tab background, network blip), the edge function continues running on the
+      // server. When the letter row is inserted in the DB, this listener fires and we navigate.
+      realtimeChannel = supabase
+        .channel(`letter-${recording.id}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "letters",
+            filter: `recording_id=eq.${recording.id}`,
+          },
+          (payload) => {
+            const letterId = (payload.new as any)?.id;
+            if (letterId) {
+              toast.success("Letter ready");
+              navigateOnce(letterId);
+            }
+          }
+        )
+        .subscribe();
+
       // Kick off audio upload in background (non-blocking)
       const uploadPromise = supabase.storage
         .from("audio-recordings")
@@ -651,7 +686,6 @@ const Record = () => {
       // We need audio in storage when:
       // - There's no live transcript at all (uploaded file, or no Deepgram capture)
       // - A disconnect happened (forcing full re-transcription via MedASR)
-      // (Dictation mode no longer forces MedASR — user edits the live transcript directly)
       const needsAudioUpload = !safeTranscript || disconnectOccurred;
 
       if (needsAudioUpload) {
@@ -668,9 +702,11 @@ const Record = () => {
           ? "Re-transcribing full recording with MedASR..."
           : "Generating clinical letter..."
       );
-      const { data: fnData, error: fnError } = await supabase.functions.invoke(
-        "generate-letter",
-        {
+
+      // Fire the edge function. We don't strictly need the response to navigate (Realtime will
+      // fire when the letter is created), but a successful response lets us navigate faster.
+      const fnPromise = supabase.functions
+        .invoke("generate-letter", {
           body: {
             recording_id: recording.id,
             audio_path: fileName,
@@ -681,21 +717,43 @@ const Record = () => {
             template_id: selectedTemplateId || undefined,
             had_disconnect: disconnectOccurred,
           },
-        }
-      );
+        });
 
-      if (fnError) throw fnError;
+      // Race the function response against the realtime event (whichever arrives first).
+      const { data: fnData, error: fnError } = await fnPromise;
+
+      if (fnError) {
+        // Don't immediately fail — the server may have completed and Realtime will catch it.
+        // But also surface the error after a short grace period in case nothing comes through.
+        console.error("Edge function returned error:", fnError);
+        setTimeout(() => {
+          if (!navigated) {
+            toast.error(fnError.message || "Letter generation failed");
+            setProcessing(false);
+            setProcessingStatus("");
+            if (realtimeChannel) {
+              supabase.removeChannel(realtimeChannel);
+              realtimeChannel = null;
+            }
+          }
+        }, 5000);
+        return;
+      }
 
       if (disconnectOccurred) {
         toast.success("Letter generated using full re-transcription for accuracy");
       } else {
         toast.success("Letter generated successfully!");
       }
-      navigate(`/letter/${fnData.letter_id}`);
+      if (fnData?.letter_id) navigateOnce(fnData.letter_id);
     } catch (error: any) {
       toast.error(error.message || "Failed to process recording");
       setProcessing(false);
       setProcessingStatus("");
+      if (realtimeChannel) {
+        supabase.removeChannel(realtimeChannel);
+        realtimeChannel = null;
+      }
     }
   };
 
@@ -903,8 +961,8 @@ const Record = () => {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => navigate("/templates")}
-                    title={selectedTemplate?.is_preset ? "Clone & edit this template" : "Edit this template"}
+                    onClick={() => navigate(`/templates?new=${mode}`)}
+                    title={`Create or edit a ${mode} template`}
                     className="h-9 px-3"
                   >
                     <Pencil className="h-4 w-4" />
@@ -918,8 +976,8 @@ const Record = () => {
                 {myTemplatesForMode.length === 0 && (
                   <div className="text-xs text-slate-500 dark:text-slate-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-md p-2 mt-1">
                     None of these suit your style?{" "}
-                    <Link to="/templates" className="text-primary hover:underline font-medium">
-                      Create your own template
+                    <Link to={`/templates?new=${mode}`} className="text-primary hover:underline font-medium">
+                      Create your own {mode} template
                     </Link>{" "}
                     or clone a preset to customise.
                   </div>
@@ -1017,16 +1075,21 @@ const Record = () => {
                 )}
 
                 {processing && (
-                  <div className="flex flex-col items-center gap-3">
+                  <div className="flex flex-col items-center gap-3 w-full">
                     <div className="relative">
                       <div className="absolute -inset-3 rounded-full bg-blue-500/10 animate-pulse" />
                       <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-primary shadow-lg shadow-primary/25">
                         <Loader2 className="h-8 w-8 text-white animate-spin" />
                       </div>
                     </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 font-medium">
+                    <p className="text-sm text-slate-600 dark:text-slate-400 font-medium text-center">
                       {processingStatus}
                     </p>
+                    <div className="text-xs text-slate-500 dark:text-slate-400 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-md p-2.5 mt-2 w-full">
+                      <strong>You can leave this page.</strong> Generation continues in the
+                      background — we'll open the letter automatically when it's ready, or you
+                      can find it in the Letters tab.
+                    </div>
                   </div>
                 )}
 
