@@ -61,13 +61,14 @@ serve(async (req) => {
 
 `;
 
-    // Always frame this as a refinement task. If a template is provided,
-    // it goes in as additional structural guidance — not as the primary system prompt.
-    // This avoids the conflict where the template's "transcript → letter" wording
-    // fights with the "refine existing letter" task.
-    const REFINEMENT_BASE = `You are a professional UK clinical documentation assistant. Your task is to REFINE an existing clinical letter that has already been written. You are not generating a new letter from a transcript — you are editing the letter below according to the clinician's instructions.
+    // The consultation transcript is the authoritative source of clinical truth. The current
+    // letter is the working draft being revised. When the clinician asks for changes, the AI
+    // should pull facts from the transcript — not just rearrange what's already in the letter.
+    const REFINEMENT_BASE = `You are a professional UK clinical documentation assistant. You are revising a clinical letter according to the clinician's instructions.
 
-Preserve all clinical content and accuracy. Apply the changes requested. Use UK English and NHS terminology. Return only the revised letter text with no preamble, headings like "Revised Letter:", or commentary.`;
+SOURCE OF TRUTH: The CONSULTATION TRANSCRIPT below is the authoritative source of clinical information. When applying changes — especially when asked to add detail, expand a section, or include something — draw the facts from the transcript. The current letter is only the working draft; it may have omitted details that are present in the transcript.
+
+Preserve clinical accuracy. Apply the changes requested. Use UK English and NHS terminology. Return only the revised letter text with no preamble, headings like "Revised Letter:", or commentary.`;
 
     let templateGuidance = "";
     if (template_id) {
@@ -77,7 +78,7 @@ Preserve all clinical content and accuracy. Apply the changes requested. Use UK 
         .eq("id", template_id)
         .single();
       if (tmpl?.prompt) {
-        templateGuidance = `\n\nADDITIONAL STRUCTURAL GUIDANCE — reformat the letter to follow this template's structure and conventions (preserve all clinical detail; only change formatting/structure):\n\n${tmpl.prompt}`;
+        templateGuidance = `\n\nADDITIONAL STRUCTURAL GUIDANCE — reformat the letter to follow this template's structure and conventions (draw all clinical detail from the transcript):\n\n${tmpl.prompt}`;
       }
     }
 
@@ -90,11 +91,13 @@ Preserve all clinical content and accuracy. Apply the changes requested. Use UK 
       .filter(Boolean)
       .join("\n");
 
-    const userPrompt = `${patientHeader ? `${patientHeader}\n\n` : ""}EXISTING LETTER (refine this):
+    const userPrompt = `${patientHeader ? `${patientHeader}\n\n` : ""}${
+      letter.transcript
+        ? `CONSULTATION TRANSCRIPT (authoritative source — draw clinical facts from here):\n\n${letter.transcript}\n\n`
+        : ""
+    }CURRENT LETTER DRAFT (revise this):
 
 ${letter.letter_content}
-
-${letter.transcript ? `\nORIGINAL TRANSCRIPT (for clinical reference only — do not regenerate from this):\n\n${letter.transcript}\n` : ""}
 
 INSTRUCTIONS:
 

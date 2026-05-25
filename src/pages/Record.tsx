@@ -186,7 +186,11 @@ const Record = () => {
 
       try {
         const start = performance.now();
-        await fetch("https://api.deepgram.com/v1/", { method: "HEAD", mode: "no-cors" });
+        // Ping our own backend to gauge connection quality (provider-neutral)
+        await fetch(`${import.meta.env.VITE_SUPABASE_URL || "https://mdunhinhsrdrilxcdbvq.supabase.co"}/auth/v1/health`, {
+          method: "HEAD",
+          mode: "no-cors",
+        });
         const rtt = performance.now() - start;
         if (cancelled) return;
 
@@ -265,12 +269,12 @@ const Record = () => {
           }
         }
       } catch (e) {
-        console.error("[Deepgram] Parse error:", e);
+        console.error("[Transcription] Parse error:", e);
       }
     };
 
     ws.onclose = (e) => {
-      console.log("[Deepgram] Closed:", e.code, e.reason);
+      console.log("[Transcription] Closed:", e.code, e.reason);
       // Trigger reconnection if we're still actively recording (and not deliberately stopping)
       if (!isStoppingRef.current && mediaRecorderRef.current &&
           (mediaRecorderRef.current.state === "recording" || mediaRecorderRef.current.state === "paused")) {
@@ -279,7 +283,7 @@ const Record = () => {
     };
 
     ws.onerror = (e) => {
-      console.error("[Deepgram] Error:", e);
+      console.error("[Transcription] Error:", e);
     };
   }, []);
 
@@ -314,14 +318,14 @@ const Record = () => {
 
       ws.onopen = () => {
         clearTimeout(timeout);
-        console.log("[Deepgram] Connected");
+        console.log("[Transcription] Connected");
         lastMessageAtRef.current = Date.now();
         resolve(ws);
       };
 
       ws.onerror = (e) => {
         clearTimeout(timeout);
-        console.error("[Deepgram] Connection error:", e);
+        console.error("[Transcription] Connection error:", e);
         reject(new Error("Deepgram connection failed"));
       };
     });
@@ -329,14 +333,14 @@ const Record = () => {
 
   const flushPendingChunks = useCallback((ws: WebSocket) => {
     if (pendingChunksRef.current.length === 0) return;
-    console.log(`[Deepgram] Flushing ${pendingChunksRef.current.length} buffered chunks`);
+    console.log(`[Transcription] Flushing ${pendingChunksRef.current.length} buffered chunks`);
     for (const chunk of pendingChunksRef.current) {
       try {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(chunk);
         }
       } catch (e) {
-        console.error("[Deepgram] Failed to send buffered chunk:", e);
+        console.error("[Transcription] Failed to send buffered chunk:", e);
       }
     }
     pendingChunksRef.current = [];
@@ -352,7 +356,7 @@ const Record = () => {
     const attempt = reconnectAttemptRef.current;
     // Exponential backoff with cap: 1s, 2s, 4s, 8s, max 10s
     const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
-    console.log(`[Deepgram] Reconnect attempt ${attempt + 1} in ${delay}ms`);
+    console.log(`[Transcription] Reconnect attempt ${attempt + 1} in ${delay}ms`);
 
     reconnectTimerRef.current = setTimeout(async () => {
       reconnectTimerRef.current = null;
@@ -370,7 +374,7 @@ const Record = () => {
         setStreamHealth("connected");
         toast.success("Transcription resumed");
       } catch (err) {
-        console.error("[Deepgram] Reconnect failed:", err);
+        console.error("[Transcription] Reconnect failed:", err);
         // Try again
         if (!isStoppingRef.current && mediaRecorderRef.current &&
             (mediaRecorderRef.current.state === "recording" || mediaRecorderRef.current.state === "paused")) {
@@ -432,7 +436,7 @@ const Record = () => {
           try {
             currentWs.send(e.data);
           } catch (err) {
-            console.error("[Deepgram] Send failed, buffering:", err);
+            console.error("[Transcription] Send failed, buffering:", err);
             pendingChunksRef.current.push(e.data);
             setBufferedSeconds((s) => s + 0.25);
           }
@@ -483,7 +487,7 @@ const Record = () => {
         const notOpen = currentWs.readyState !== WebSocket.OPEN;
 
         if (notOpen || stale) {
-          console.warn("[Deepgram] Health check failed:", { notOpen, stale, readyState: currentWs.readyState });
+          console.warn("[Transcription] Health check failed:", { notOpen, stale, readyState: currentWs.readyState });
           try { currentWs.close(); } catch { /* ignore */ }
           wsRef.current = null;
           if (mediaRecorderRef.current &&
@@ -699,7 +703,7 @@ const Record = () => {
 
       setProcessingStatus(
         disconnectOccurred
-          ? "Re-transcribing full recording with MedASR..."
+          ? "Re-transcribing full recording for accuracy..."
           : "Generating clinical letter..."
       );
 

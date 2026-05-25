@@ -7,68 +7,6 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Generate a GCP identity token for Cloud Run authentication
-async function getGcpIdentityToken(serviceAccountKey: string, targetAudience: string): Promise<string> {
-  const sa = JSON.parse(serviceAccountKey);
-  const now = Math.floor(Date.now() / 1000);
-
-  const header = { alg: "RS256", typ: "JWT" };
-  const claims = {
-    iss: sa.client_email,
-    sub: sa.client_email,
-    aud: "https://oauth2.googleapis.com/token",
-    iat: now,
-    exp: now + 3600,
-    target_audience: targetAudience,
-  };
-
-  const encode = (obj: unknown) =>
-    btoa(JSON.stringify(obj)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-
-  const unsignedToken = `${encode(header)}.${encode(claims)}`;
-
-  const pemContent = sa.private_key
-    .replace("-----BEGIN PRIVATE KEY-----", "")
-    .replace("-----END PRIVATE KEY-----", "")
-    .replace(/\n/g, "");
-  const binaryKey = Uint8Array.from(atob(pemContent), (c) => c.charCodeAt(0));
-
-  const cryptoKey = await crypto.subtle.importKey(
-    "pkcs8",
-    binaryKey,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-
-  const signature = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    cryptoKey,
-    new TextEncoder().encode(unsignedToken)
-  );
-
-  const sig = btoa(String.fromCharCode(...new Uint8Array(signature)))
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-
-  const jwt = `${unsignedToken}.${sig}`;
-
-  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
-  });
-
-  if (!tokenResponse.ok) {
-    const err = await tokenResponse.text();
-    throw new Error(`Failed to get GCP identity token: ${err}`);
-  }
-
-  const { id_token } = await tokenResponse.json();
-  return id_token;
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -80,11 +18,9 @@ serve(async (req) => {
       throw new Error("OPENAI_API_KEY is not configured");
     }
 
-    const MEDASR_URL = Deno.env.get("MEDASR_URL");
-    const MEDASR_API_KEY = Deno.env.get("MEDASR_API_KEY");
-    const GCP_SERVICE_ACCOUNT_KEY = Deno.env.get("GCP_SERVICE_ACCOUNT_KEY");
-    if (!MEDASR_URL) {
-      throw new Error("MEDASR_URL must be configured");
+    const DEEPGRAM_API_KEY = Deno.env.get("DEEPGRAM_API_KEY");
+    if (!DEEPGRAM_API_KEY) {
+      throw new Error("Transcription service is not configured");
     }
 
     const authHeader = req.headers.get("Authorization");
@@ -128,19 +64,18 @@ serve(async (req) => {
 
     let transcript: string;
 
-    // Use the supplied (live + user-edited) transcript when available. MedASR is only used as a
-    // fallback when there's no transcript (e.g. uploaded audio file with no live capture, or
-    // signal-drop fallback path triggered client-side by passing transcript=undefined).
-    const shouldUseMedAsr = !preBuiltTranscript;
+    // Use the supplied (live + user-edited) transcript when available. Otherwise transcribe the
+    // full audio file (uploaded files, or the signal-drop fallback path where the client passes
+    // transcript=undefined to guarantee a complete record).
+    const needsTranscription = !preBuiltTranscript;
 
-    if (!shouldUseMedAsr) {
+    if (!needsTranscription) {
       transcript = preBuiltTranscript;
       await supabase
         .from("recordings")
         .update({ status: "transcribed" })
         .eq("id", recording_id);
     } else {
-      // Legacy path: download audio and transcribe in one go
       if (!audio_path) {
         throw new Error("audio_path is required when transcript is not provided");
       }
@@ -151,42 +86,64 @@ serve(async (req) => {
         .download(audio_path);
       if (downloadError) throw new Error(`Failed to download audio: ${downloadError.message}`);
 
-      // Update status to processing
       await supabase
         .from("recordings")
         .update({ status: "processing" })
         .eq("id", recording_id);
 
-      // Transcribe with Google MedASR via Cloud Run service
-      const formData = new FormData();
-      formData.append("file", audioData, "audio.webm");
+      // Transcribe the full audio file via the pre-recorded transcription API.
+      // Determine content type from file extension (webm from recordings, others from uploads).
+      const ext = (audio_path.split(".").pop() || "webm").toLowerCase();
+      const contentTypeMap: Record<string, string> = {
+        webm: "audio/webm",
+        wav: "audio/wav",
+        mp3: "audio/mpeg",
+        mpeg: "audio/mpeg",
+        m4a: "audio/mp4",
+        mp4: "audio/mp4",
+        ogg: "audio/ogg",
+      };
+      const contentType = contentTypeMap[ext] || "audio/webm";
 
-      // Build auth headers for Cloud Run
-      const medAsrHeaders: Record<string, string> = {};
-      if (GCP_SERVICE_ACCOUNT_KEY) {
-        const idToken = await getGcpIdentityToken(GCP_SERVICE_ACCOUNT_KEY, MEDASR_URL);
-        medAsrHeaders["Authorization"] = `Bearer ${idToken}`;
-      } else if (MEDASR_API_KEY) {
-        medAsrHeaders["Authorization"] = `Bearer ${MEDASR_API_KEY}`;
-      }
+      const audioBuffer = await audioData.arrayBuffer();
 
-      const medAsrResponse = await fetch(`${MEDASR_URL}/transcribe`, {
-        method: "POST",
-        headers: medAsrHeaders,
-        body: formData,
+      const dgParams = new URLSearchParams({
+        model: "nova-2-medical",
+        language: "en-GB",
+        smart_format: "true",
+        punctuate: "true",
+        paragraphs: "true",
       });
 
-      if (!medAsrResponse.ok) {
-        const errText = await medAsrResponse.text();
-        console.error("MedASR error:", errText);
+      const dgResponse = await fetch(
+        `https://api.deepgram.com/v1/listen?${dgParams}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Token ${DEEPGRAM_API_KEY}`,
+            "Content-Type": contentType,
+          },
+          body: audioBuffer,
+        }
+      );
+
+      if (!dgResponse.ok) {
+        const errText = await dgResponse.text();
+        console.error("Transcription error:", errText);
         await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
-        throw new Error(`Transcription failed: ${errText}`);
+        throw new Error("Transcription failed. Please try again.");
       }
 
-      const medAsrResult = await medAsrResponse.json();
-      transcript = medAsrResult.text;
+      const dgResult = await dgResponse.json();
+      transcript =
+        dgResult?.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? "";
 
-      // Update recording status
+      if (!transcript.trim()) {
+        console.error("Transcription returned empty result");
+        await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
+        throw new Error("No speech could be detected in the recording.");
+      }
+
       await supabase
         .from("recordings")
         .update({ status: "transcribed" })

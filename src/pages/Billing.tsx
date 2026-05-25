@@ -70,7 +70,7 @@ const Billing = () => {
               </li>
               <li className="flex items-center gap-2">
                 <Check className="h-4 w-4 text-primary" />
-                Medical transcription (MedASR)
+                Medical-grade transcription
               </li>
               <li className="flex items-center gap-2">
                 <Check className="h-4 w-4 text-primary" />

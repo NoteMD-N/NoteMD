@@ -24,6 +24,7 @@ import {
   LayoutTemplate,
   User,
   IdCard,
+  Headphones,
 } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 
@@ -52,14 +53,17 @@ const LetterView = () => {
   const [regenerating, setRegenerating] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
 
+  // Audio playback
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
   useEffect(() => {
     if (!id) return;
     supabase
       .from("letters")
-      .select("*")
+      .select("*, recordings(audio_path)")
       .eq("id", id)
       .single()
-      .then(({ data, error }) => {
+      .then(async ({ data, error }) => {
         if (error || !data) {
           toast.error("Letter not found");
           navigate("/dashboard");
@@ -68,6 +72,15 @@ const LetterView = () => {
         setLetter(data);
         setEditedContent(data.letter_content || "");
         setLoading(false);
+
+        // Create a signed URL for the linked recording's audio so the user can review it
+        const audioPath = (data.recordings as any)?.audio_path;
+        if (audioPath) {
+          const { data: signed } = await supabase.storage
+            .from("audio-recordings")
+            .createSignedUrl(audioPath, 3600);
+          if (signed?.signedUrl) setAudioUrl(signed.signedUrl);
+        }
       });
 
     // Load templates for the "change template" dropdown
@@ -187,6 +200,23 @@ const LetterView = () => {
             </Button>
           </div>
         </div>
+
+        {/* Audio playback */}
+        {audioUrl && (
+          <Card className="shadow-card">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-heading text-sm text-muted-foreground flex items-center gap-2">
+                <Headphones className="h-4 w-4" />
+                Audio Recording
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <audio controls preload="metadata" src={audioUrl} className="w-full">
+                Your browser does not support audio playback.
+              </audio>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Transcript */}
         {letter?.transcript && (
