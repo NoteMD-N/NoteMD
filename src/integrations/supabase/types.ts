@@ -66,6 +66,9 @@ export type Database = {
       }
       profiles: {
         Row: {
+          auto_send_enabled: boolean
+          auto_send_recipients: string[]
+          clinician_id: string | null
           created_at: string
           full_name: string | null
           id: string
@@ -75,6 +78,9 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          auto_send_enabled?: boolean
+          auto_send_recipients?: string[]
+          clinician_id?: string | null
           created_at?: string
           full_name?: string | null
           id?: string
@@ -84,6 +90,9 @@ export type Database = {
           user_id: string
         }
         Update: {
+          auto_send_enabled?: boolean
+          auto_send_recipients?: string[]
+          clinician_id?: string | null
           created_at?: string
           full_name?: string | null
           id?: string

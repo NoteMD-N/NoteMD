@@ -369,6 +369,35 @@ RULES:
       .update({ status: "letter_generated" })
       .eq("id", recording_id);
 
+    // Auto-send by email if the clinician has enabled it and has saved recipients
+    try {
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("auto_send_enabled, auto_send_recipients")
+        .eq("user_id", userId)
+        .single();
+
+      if (prof?.auto_send_enabled && (prof.auto_send_recipients?.length ?? 0) > 0) {
+        const emailResp = await fetch(
+          `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-letter-email`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: authHeader,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ letter_id: letter.id }),
+          }
+        );
+        if (!emailResp.ok) {
+          console.warn("Auto-send email did not complete:", await emailResp.text());
+        }
+      }
+    } catch (e) {
+      // Never fail letter generation because of an email problem
+      console.warn("Auto-send email error (non-fatal):", e);
+    }
+
     return new Response(
       JSON.stringify({ letter_id: letter.id, success: true }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }

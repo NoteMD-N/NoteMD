@@ -25,6 +25,7 @@ import {
   User,
   IdCard,
   Headphones,
+  Mail,
 } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 
@@ -45,6 +46,7 @@ const LetterView = () => {
   const [letter, setLetter] = useState<Letter | null>(null);
   const [editedContent, setEditedContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Regenerate panel state
@@ -113,6 +115,32 @@ const LetterView = () => {
   const handleCopy = () => {
     navigator.clipboard.writeText(editedContent);
     toast.success("Copied to clipboard");
+  };
+
+  const handleSendEmail = async () => {
+    if (!letter) return;
+    setSending(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-letter-email", {
+        body: { letter_id: letter.id },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.not_configured) {
+        toast.error("Email delivery isn't set up yet. Add a sending domain to enable it.");
+        return;
+      }
+      if (data?.error) throw new Error(data.error);
+      toast.success(`Letter emailed to ${data.sent_to?.length || 0} recipient(s)`);
+    } catch (err: any) {
+      const msg = err.message || "Failed to send email";
+      if (msg.includes("No recipient")) {
+        toast.error("No recipients saved. Add addresses in Settings → Email.");
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleRegenerate = async (overrideInstructions?: string, fast?: boolean) => {
@@ -193,6 +221,16 @@ const LetterView = () => {
             <Button onClick={handleCopy} variant="outline" size="sm" className="gap-2">
               <Copy className="h-4 w-4" />
               Copy
+            </Button>
+            <Button
+              onClick={handleSendEmail}
+              variant="outline"
+              size="sm"
+              disabled={sending}
+              className="gap-2"
+            >
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+              {sending ? "Sending..." : "Send by Email"}
             </Button>
             <Button onClick={handleSave} size="sm" disabled={saving} className="gap-2">
               <Save className="h-4 w-4" />
