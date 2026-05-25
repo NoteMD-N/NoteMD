@@ -65,18 +65,17 @@ const AppSidebar = () => {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild className="hover:bg-transparent">
-              <NavLink to="/dashboard">
-                {/* Compact mark — shown only when the sidebar is collapsed to icons */}
-                <BrandMark className="hidden h-8 w-8 shrink-0 group-data-[collapsible=icon]:block" />
-                {/* Full logo lockup — shown when the sidebar is expanded */}
-                <BrandLockup className="h-9 w-auto object-contain group-data-[collapsible=icon]:hidden" />
-              </NavLink>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        {/* Full logo lockup — spans the full sidebar width when expanded */}
+        <NavLink to="/dashboard" className="block group-data-[collapsible=icon]:hidden">
+          <BrandLockup className="w-full h-auto object-contain" />
+        </NavLink>
+        {/* Compact mark — centred when the sidebar is collapsed to icons */}
+        <NavLink
+          to="/dashboard"
+          className="hidden justify-center group-data-[collapsible=icon]:flex"
+        >
+          <BrandMark className="h-8 w-8 shrink-0" />
+        </NavLink>
       </SidebarHeader>
 
       <SidebarSeparator />
