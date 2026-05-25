@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  Stethoscope,
   LayoutDashboard,
   Mic,
   List,
@@ -35,6 +34,7 @@ import {
   LogOut,
   ChevronsUpDown,
 } from "lucide-react";
+import { BrandMark, BrandLockup } from "@/components/BrandLogo";
 
 const navItems = [
   { title: "Dashboard", icon: LayoutDashboard, to: "/dashboard" },
@@ -67,15 +67,12 @@ const AppSidebar = () => {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
+            <SidebarMenuButton size="lg" asChild className="hover:bg-transparent">
               <NavLink to="/dashboard">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-                  <Stethoscope className="h-4 w-4 text-primary-foreground" />
-                </div>
-                <div className="flex flex-col gap-0.5 leading-none">
-                  <span className="font-heading font-bold">NoteMD</span>
-                  <span className="text-xs text-muted-foreground">Medical Transcription</span>
-                </div>
+                {/* Compact mark — shown only when the sidebar is collapsed to icons */}
+                <BrandMark className="hidden h-8 w-8 shrink-0 group-data-[collapsible=icon]:block" />
+                {/* Full logo lockup — shown when the sidebar is expanded */}
+                <BrandLockup className="h-9 w-auto object-contain group-data-[collapsible=icon]:hidden" />
               </NavLink>
             </SidebarMenuButton>
           </SidebarMenuItem>

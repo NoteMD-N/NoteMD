@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Stethoscope } from "lucide-react";
+import { BrandLockup } from "@/components/BrandLogo";
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -45,12 +45,8 @@ const Auth = () => {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-md animate-fade-in">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl gradient-primary">
-            <Stethoscope className="h-7 w-7 text-primary-foreground" />
-          </div>
-          <h1 className="font-heading text-3xl font-bold text-foreground">NoteMD</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Clinical documentation assistant</p>
+        <div className="mb-8 flex flex-col items-center text-center">
+          <BrandLockup className="mb-2 h-16 w-auto object-contain" />
         </div>
 
         <Card className="shadow-elevated">
