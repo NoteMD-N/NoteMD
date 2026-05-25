@@ -26,3 +26,6 @@ dist-ssr
 # Supabase CLI
 supabase/.temp/
 supabase/.branches/
+
+# Local preview/launch config
+.claude/
