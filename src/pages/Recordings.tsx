@@ -93,9 +93,9 @@ const Recordings = () => {
   const statuses = [...new Set(recordings.map((r) => r.status))];
 
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h2 className="font-heading text-2xl font-bold text-foreground">Recordings</h2>
+    <div className="space-y-3">
+      <div className="px-1 pt-1">
+        <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">Recordings</h1>
         <p className="text-sm text-muted-foreground">Manage all your consultation recordings</p>
       </div>
 
@@ -126,7 +126,7 @@ const Recordings = () => {
       </div>
 
       {/* Table */}
-      <Card className="shadow-card">
+      <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-6 space-y-3">

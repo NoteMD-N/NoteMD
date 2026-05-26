@@ -6,7 +6,8 @@
 
 @layer base {
   :root {
-    --background: 210 20% 98%;
+    /* Light grey canvas so white bento cards float */
+    --background: 210 16% 93%;
     --foreground: 215 25% 12%;
 
     --card: 0 0% 100%;
@@ -36,9 +37,10 @@
     --input: 210 18% 88%;
     --ring: 212 64% 24%;
 
-    --radius: 0.625rem;
+    --radius: 0.75rem;
 
-    --sidebar-background: 210 25% 96%;
+    /* White floating sidebar card */
+    --sidebar-background: 0 0% 100%;
     --sidebar-foreground: 215 25% 12%;
     --sidebar-primary: 212 64% 24%;
     --sidebar-primary-foreground: 0 0% 100%;
@@ -99,6 +101,25 @@
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading);
   }
+
+  /* Smooth, subtle scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(215 12% 80%);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(215 12% 66%);
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: hsl(215 14% 30%);
+  }
 }
 
 @layer utilities {
@@ -113,5 +134,13 @@
   }
   .shadow-elevated {
     box-shadow: var(--shadow-elevated);
+  }
+
+  /* Bento cards — floating white panels on the grey canvas */
+  .bento-card {
+    @apply bg-card rounded-2xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)] p-6;
+  }
+  .bento-card-sm {
+    @apply bg-card rounded-xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)] p-4;
   }
 }

@@ -42,15 +42,15 @@ const Billing = () => {
   const letUsage = letters.length;
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl">
-      <div>
-        <h2 className="font-heading text-2xl font-bold text-foreground">Billing</h2>
+    <div className="space-y-3 max-w-3xl">
+      <div className="px-1 pt-1">
+        <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">Billing</h1>
         <p className="text-sm text-muted-foreground">Manage your subscription and usage</p>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Current Plan */}
-        <Card className="shadow-card">
+        <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="font-heading text-lg">Current Plan</CardTitle>
@@ -81,7 +81,7 @@ const Billing = () => {
         </Card>
 
         {/* Usage */}
-        <Card className="shadow-card">
+        <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
           <CardHeader>
             <CardTitle className="font-heading text-lg">This Month's Usage</CardTitle>
             <CardDescription>Your resource usage for the current billing period</CardDescription>
@@ -106,7 +106,7 @@ const Billing = () => {
       </div>
 
       {/* Upgrade CTA */}
-      <Card className="shadow-card border-primary/20 bg-gradient-to-br from-primary/5 to-accent/5">
+      <Card className="rounded-2xl border-primary/20 shadow-[0_1px_3px_rgba(21,33,52,0.04)] bg-gradient-to-br from-primary/5 to-accent/5">
         <CardHeader>
           <div className="flex items-center gap-2">
             <Zap className="h-5 w-5 text-primary" />

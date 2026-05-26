@@ -63,7 +63,7 @@ const AppSidebar = () => {
   };
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar variant="floating" collapsible="icon">
       <SidebarHeader>
         {/* Full logo lockup — spans the full sidebar width when expanded */}
         <NavLink to="/dashboard" className="block group-data-[collapsible=icon]:hidden">

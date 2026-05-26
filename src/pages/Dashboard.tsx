@@ -2,9 +2,9 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SummaryCard } from "@/components/SummaryCard";
 import {
   Table,
   TableBody,
@@ -13,8 +13,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Mic, FileText, Clock, BarChart3, ArrowRight } from "lucide-react";
+import { Mic, FileText, Clock, BarChart3, ArrowRight, User } from "lucide-react";
 import { format, startOfMonth } from "date-fns";
+import { useAuth } from "@/hooks/useAuth";
 
 const statusColors: Record<string, string> = {
   uploaded: "bg-muted text-muted-foreground",
@@ -36,6 +37,7 @@ const formatDuration = (seconds: number | null) => {
 
 const Dashboard = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const { data: recordings = [], isLoading: loadingRec } = useQuery({
     queryKey: ["recordings"],
@@ -67,105 +69,107 @@ const Dashboard = () => {
   const thisMonthRec = recordings.filter((r) => r.created_at >= monthStart).length;
   const thisMonthLet = letters.filter((l) => l.created_at >= monthStart).length;
 
-  const recentRecordings = recordings.slice(0, 5);
-
+  const recentRecordings = recordings.slice(0, 6);
   const getLetterForRecording = (recordingId: string) =>
     letters.find((l) => l.recording_id === recordingId);
 
-  const stats = [
-    { label: "Total Recordings", value: recordings.length, icon: Mic, color: "text-primary" },
-    { label: "Letters Generated", value: letters.length, icon: FileText, color: "text-accent" },
-    { label: "This Month Recordings", value: thisMonthRec, icon: BarChart3, color: "text-primary" },
-    { label: "This Month Letters", value: thisMonthLet, icon: Clock, color: "text-accent" },
-  ];
+  const firstName = user?.user_metadata?.full_name?.split(" ")[0];
 
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h2 className="font-heading text-2xl font-bold text-foreground">Dashboard</h2>
-        <p className="text-sm text-muted-foreground">Your recordings and generated letters</p>
+    <div className="space-y-3">
+      {/* Welcome header */}
+      <div className="px-1 pt-1">
+        <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">
+          {firstName ? `Welcome back, ${firstName}` : "Dashboard"}
+        </h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Your recordings and generated letters at a glance
+        </p>
       </div>
 
-      {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) =>
-          loading ? (
-            <Card key={stat.label} className="shadow-card">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-5 w-5 rounded" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-8 w-16" />
-              </CardContent>
-            </Card>
-          ) : (
-            <Card key={stat.label} className="shadow-card">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {stat.label}
-                </CardTitle>
-                <stat.icon className={`h-5 w-5 ${stat.color}`} />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold">{stat.value}</div>
-              </CardContent>
-            </Card>
-          )
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bento-card-sm">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="mt-3 h-8 w-12" />
+            </div>
+          ))
+        ) : (
+          <>
+            <SummaryCard title="Total Recordings" value={recordings.length} icon={Mic} />
+            <SummaryCard title="Letters Generated" value={letters.length} icon={FileText} variant="accent" />
+            <SummaryCard title="Recordings This Month" value={thisMonthRec} icon={BarChart3} />
+            <SummaryCard title="Letters This Month" value={thisMonthLet} icon={Clock} variant="accent" />
+          </>
         )}
       </div>
 
-      {/* Recent Recordings Table */}
-      <Card className="shadow-card">
-        <CardHeader className="flex flex-row items-center justify-between">
+      {/* Recent recordings */}
+      <div className="bento-card !p-0 overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4">
           <div>
-            <CardTitle className="font-heading text-lg">Recent Recordings</CardTitle>
-            <CardDescription>Your latest consultation recordings</CardDescription>
+            <h2 className="text-[15px] font-semibold text-foreground">Recent Recordings</h2>
+            <p className="text-xs text-muted-foreground">Your latest consultation recordings</p>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => navigate("/recordings")} className="gap-1">
-            View All <ArrowRight className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate("/recordings")}
+            className="gap-1 rounded-lg text-primary"
+          >
+            View all <ArrowRight className="h-3.5 w-3.5" />
           </Button>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full" />
-              ))}
-            </div>
-          ) : recentRecordings.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Mic className="mb-4 h-12 w-12 text-muted-foreground/40" />
-              <h3 className="font-heading text-lg font-semibold text-foreground">No recordings yet</h3>
-              <p className="mb-4 text-sm text-muted-foreground">
-                Start by recording a consultation
-              </p>
-              <Button onClick={() => navigate("/record")} className="gap-2">
-                <Mic className="h-4 w-4" />
-                New Recording
-              </Button>
-            </div>
-          ) : (
+        </div>
+
+        {loading ? (
+          <div className="space-y-3 px-6 pb-6">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
+        ) : recentRecordings.length === 0 ? (
+          <div className="flex flex-col items-center justify-center px-6 py-14 border-t border-border/50">
+            <Mic className="mb-4 h-12 w-12 text-muted-foreground/40" />
+            <h3 className="font-heading text-lg font-semibold text-foreground">No recordings yet</h3>
+            <p className="mb-4 text-sm text-muted-foreground">Start by recording a consultation</p>
+            <Button onClick={() => navigate("/record")} className="gap-2 rounded-xl">
+              <Mic className="h-4 w-4" />
+              New Recording
+            </Button>
+          </div>
+        ) : (
+          <div className="overflow-x-auto border-t border-border/50">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="pl-6 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Patient</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Date</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Duration</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status</TableHead>
+                  <TableHead className="pr-6 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Letter</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {recentRecordings.map((rec) => {
                   const letter = getLetterForRecording(rec.id);
                   return (
-                    <TableRow key={rec.id}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {rec.id.slice(0, 8)}
+                    <TableRow key={rec.id} className="hover:bg-muted/30">
+                      <TableCell className="pl-6">
+                        {rec.patient_name ? (
+                          <span className="flex items-center gap-1.5 text-[13px] font-medium">
+                            <User className="h-3.5 w-3.5 text-muted-foreground" />
+                            {rec.patient_name}
+                          </span>
+                        ) : (
+                          <span className="text-xs italic text-muted-foreground">Not set</span>
+                        )}
                       </TableCell>
-                      <TableCell>{format(new Date(rec.created_at), "dd MMM yyyy, HH:mm")}</TableCell>
-                      <TableCell className="font-mono text-sm">
+                      <TableCell className="text-[13px] text-muted-foreground">
+                        {format(new Date(rec.created_at), "dd MMM yyyy, HH:mm")}
+                      </TableCell>
+                      <TableCell className="font-mono text-[13px]">
                         {formatDuration(rec.duration_seconds)}
                       </TableCell>
                       <TableCell>
@@ -173,16 +177,16 @@ const Dashboard = () => {
                           {rec.status.replace("_", " ")}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="pr-6 text-right">
                         {letter ? (
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => navigate(`/letter/${letter.id}`)}
-                            className="gap-1"
+                            className="gap-1 rounded-lg text-primary"
                           >
                             <FileText className="h-3.5 w-3.5" />
-                            View Letter
+                            View
                           </Button>
                         ) : (
                           <span className="text-xs text-muted-foreground">--</span>
@@ -193,50 +197,9 @@ const Dashboard = () => {
                 })}
               </TableBody>
             </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Recent Letters */}
-      {letters.length > 0 && (
-        <Card className="shadow-card">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="font-heading text-lg">Recent Letters</CardTitle>
-              <CardDescription>Your latest generated letters</CardDescription>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => navigate("/letters")} className="gap-1">
-              View All <ArrowRight className="h-4 w-4" />
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3">
-              {letters.slice(0, 3).map((letter) => (
-                <div
-                  key={letter.id}
-                  className="flex items-center justify-between rounded-lg border p-3 cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => navigate(`/letter/${letter.id}`)}
-                >
-                  <div className="flex items-center gap-3">
-                    <FileText className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm font-medium">
-                        Letter <span className="font-mono text-muted-foreground">{letter.id.slice(0, 8)}</span>
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {format(new Date(letter.created_at), "dd MMM yyyy")}
-                      </p>
-                    </div>
-                  </div>
-                  <Badge variant="secondary" className={statusColors[letter.status] || ""}>
-                    {letter.status}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

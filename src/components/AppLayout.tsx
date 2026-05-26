@@ -1,6 +1,5 @@
 import { Outlet, useLocation, Link, useNavigate } from "react-router-dom";
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
-import { Separator } from "@/components/ui/separator";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -19,6 +18,7 @@ const routeLabels: Record<string, string> = {
   letters: "Letters",
   record: "New Recording",
   letter: "Letter",
+  templates: "Templates",
   settings: "Settings",
   billing: "Billing",
 };
@@ -37,45 +37,43 @@ const AppLayout = () => {
 
   return (
     <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset>
-        {/* Top bar */}
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-4">
-          <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-2 h-4" />
-          <Breadcrumb className="flex-1">
-            <BreadcrumbList>
-              {breadcrumbs.map((crumb, i) => (
-                <span key={crumb.path} className="flex items-center gap-1.5">
-                  {i > 0 && <BreadcrumbSeparator />}
-                  <BreadcrumbItem>
-                    {crumb.isLast ? (
-                      <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink asChild>
-                        <Link to={crumb.path}>{crumb.label}</Link>
-                      </BreadcrumbLink>
-                    )}
-                  </BreadcrumbItem>
-                </span>
-              ))}
-            </BreadcrumbList>
-          </Breadcrumb>
-          <Button
-            onClick={() => navigate("/record")}
-            size="sm"
-            className="gap-2"
-          >
-            <Mic className="h-4 w-4" />
-            <span className="hidden sm:inline">New Recording</span>
-          </Button>
-        </header>
+      <div className="flex min-h-screen w-full bg-background">
+        <AppSidebar />
+        {/* Content column — floating layout with breathing room */}
+        <div className="flex min-w-0 flex-1 flex-col gap-2 p-2 pl-0">
+          {/* Floating header bar */}
+          <header className="flex h-14 shrink-0 items-center gap-2 rounded-2xl border border-border/60 bg-card px-4 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
+            <SidebarTrigger className="-ml-1" />
+            <Breadcrumb className="flex-1">
+              <BreadcrumbList>
+                {breadcrumbs.map((crumb, i) => (
+                  <span key={crumb.path} className="flex items-center gap-1.5">
+                    {i > 0 && <BreadcrumbSeparator />}
+                    <BreadcrumbItem>
+                      {crumb.isLast ? (
+                        <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                      ) : (
+                        <BreadcrumbLink asChild>
+                          <Link to={crumb.path}>{crumb.label}</Link>
+                        </BreadcrumbLink>
+                      )}
+                    </BreadcrumbItem>
+                  </span>
+                ))}
+              </BreadcrumbList>
+            </Breadcrumb>
+            <Button onClick={() => navigate("/record")} size="sm" className="gap-2 rounded-xl">
+              <Mic className="h-4 w-4" />
+              <span className="hidden sm:inline">New Recording</span>
+            </Button>
+          </header>
 
-        {/* Page content */}
-        <main className="flex-1">
-          <Outlet />
-        </main>
-      </SidebarInset>
+          {/* Page content */}
+          <main className="flex-1 overflow-auto">
+            <Outlet />
+          </main>
+        </div>
+      </div>
     </SidebarProvider>
   );
 };

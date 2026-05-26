@@ -324,9 +324,9 @@ const Templates = () => {
   );
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
-      <div>
-        <h2 className="font-heading text-2xl font-bold text-foreground">Letter Templates</h2>
+    <div className="space-y-3 max-w-5xl">
+      <div className="px-1 pt-1">
+        <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">Letter Templates</h1>
         <p className="text-sm text-muted-foreground">
           Customise how your clinical letters are generated. Each template is a prompt that
           guides the AI's formatting, tone, and structure. Templates are organised by mode —
@@ -342,7 +342,7 @@ const Templates = () => {
       ) : (
         <>
           {/* My Consultation Templates */}
-          <Card>
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div>
@@ -386,7 +386,7 @@ const Templates = () => {
           </Card>
 
           {/* My Dictation Templates */}
-          <Card>
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div>
@@ -430,7 +430,7 @@ const Templates = () => {
           </Card>
 
           {/* Preset Consultation Templates */}
-          <Card>
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Stethoscope className="h-4 w-4" />
@@ -448,7 +448,7 @@ const Templates = () => {
           </Card>
 
           {/* Preset Dictation Templates */}
-          <Card>
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <PenLine className="h-4 w-4" />

@@ -197,8 +197,8 @@ const LetterView = () => {
   }
 
   return (
-    <div className="bg-background min-h-full">
-      <div className="max-w-4xl mx-auto p-6 space-y-6">
+    <div className="">
+      <div className="max-w-4xl mx-auto space-y-3">
         {/* Action bar */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
@@ -241,7 +241,7 @@ const LetterView = () => {
 
         {/* Audio playback */}
         {audioUrl && (
-          <Card className="shadow-card">
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader className="pb-2">
               <CardTitle className="font-heading text-sm text-muted-foreground flex items-center gap-2">
                 <Headphones className="h-4 w-4" />
@@ -258,7 +258,7 @@ const LetterView = () => {
 
         {/* Transcript */}
         {letter?.transcript && (
-          <Card className="shadow-card">
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader className="pb-2">
               <CardTitle className="font-heading text-sm text-muted-foreground flex items-center gap-2">
                 <FileText className="h-4 w-4" />
@@ -274,7 +274,7 @@ const LetterView = () => {
         )}
 
         {/* Editable Letter */}
-        <Card className="shadow-elevated">
+        <Card className="rounded-2xl border-border/60 shadow-[0_2px_8px_rgba(21,33,52,0.06)]">
           <CardHeader className="pb-2">
             <CardTitle className="font-heading text-sm text-muted-foreground">
               Generated Letter
@@ -291,7 +291,7 @@ const LetterView = () => {
         </Card>
 
         {/* Regenerate with instructions */}
-        <Card className="shadow-card border-primary/20">
+        <Card className="rounded-2xl border-primary/20 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
           <CardHeader className="pb-3">
             <CardTitle className="font-heading text-sm flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-primary" />

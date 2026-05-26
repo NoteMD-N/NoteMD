@@ -216,9 +216,9 @@ const Settings = () => {
     .slice(0, 2);
 
   return (
-    <div className="p-6 space-y-6 max-w-2xl">
-      <div>
-        <h2 className="font-heading text-2xl font-bold text-foreground">Settings</h2>
+    <div className="space-y-3 max-w-2xl">
+      <div className="px-1 pt-1">
+        <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">Settings</h1>
         <p className="text-sm text-muted-foreground">Manage your account and preferences</p>
       </div>
 
@@ -249,7 +249,7 @@ const Settings = () => {
         {/* Team / Secretaries Tab */}
         {!isSecretary && (
           <TabsContent value="team" className="space-y-6">
-            <Card className="shadow-card">
+            <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
               <CardHeader>
                 <CardTitle>Secretary Access</CardTitle>
                 <CardDescription>
@@ -329,7 +329,7 @@ const Settings = () => {
         {/* Email Tab */}
         {!isSecretary && (
           <TabsContent value="email" className="space-y-6">
-            <Card className="shadow-card">
+            <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
               <CardHeader>
                 <CardTitle>Automatic Email Delivery</CardTitle>
                 <CardDescription>
@@ -410,7 +410,7 @@ const Settings = () => {
 
         {/* Profile Tab */}
         <TabsContent value="profile" className="space-y-6">
-          <Card className="shadow-card">
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>
               <CardTitle>Profile Information</CardTitle>
               <CardDescription>Update your personal details</CardDescription>
@@ -489,7 +489,7 @@ const Settings = () => {
 
         {/* Security Tab */}
         <TabsContent value="security" className="space-y-6">
-          <Card className="shadow-card">
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>
               <CardTitle>Change Password</CardTitle>
               <CardDescription>Update your password to keep your account secure</CardDescription>

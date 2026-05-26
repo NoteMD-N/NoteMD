@@ -836,8 +836,8 @@ const Record = () => {
   }[connectionQuality];
 
   return (
-    <div className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 min-h-full">
-      <div className="p-6">
+    <div className="">
+      <div>
         <div className="max-w-5xl mx-auto space-y-4">
           {/* Top bar: mode toggle + connection status */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
