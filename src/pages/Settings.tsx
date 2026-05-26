@@ -216,7 +216,7 @@ const Settings = () => {
     .slice(0, 2);
 
   return (
-    <div className="space-y-3 max-w-2xl">
+    <div className="space-y-3">
       <div className="px-1 pt-1">
         <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">Settings</h1>
         <p className="text-sm text-muted-foreground">Manage your account and preferences</p>

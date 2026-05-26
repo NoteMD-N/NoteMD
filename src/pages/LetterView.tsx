@@ -198,7 +198,7 @@ const LetterView = () => {
 
   return (
     <div className="">
-      <div className="max-w-4xl mx-auto space-y-3">
+      <div className="space-y-3">
         {/* Action bar */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">

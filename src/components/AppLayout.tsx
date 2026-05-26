@@ -40,7 +40,7 @@ const AppLayout = () => {
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar />
         {/* Content column — floating layout with breathing room */}
-        <div className="flex min-w-0 flex-1 flex-col gap-2 p-2 pl-0">
+        <div className="flex min-w-0 flex-1 flex-col gap-2 py-2 pr-3 pl-3">
           {/* Floating header bar */}
           <header className="flex h-14 shrink-0 items-center gap-2 rounded-2xl border border-border/60 bg-card px-4 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <SidebarTrigger className="-ml-1" />

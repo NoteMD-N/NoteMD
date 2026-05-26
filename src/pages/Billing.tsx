@@ -42,7 +42,7 @@ const Billing = () => {
   const letUsage = letters.length;
 
   return (
-    <div className="space-y-3 max-w-3xl">
+    <div className="space-y-3">
       <div className="px-1 pt-1">
         <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">Billing</h1>
         <p className="text-sm text-muted-foreground">Manage your subscription and usage</p>

@@ -324,7 +324,7 @@ const Templates = () => {
   );
 
   return (
-    <div className="space-y-3 max-w-5xl">
+    <div className="space-y-3">
       <div className="px-1 pt-1">
         <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">Letter Templates</h1>
         <p className="text-sm text-muted-foreground">
