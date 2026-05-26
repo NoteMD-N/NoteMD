@@ -58,8 +58,8 @@ const Auth = () => {
 
         {/* Logo */}
         <div className="relative">
-          <div className="inline-flex rounded-xl bg-white px-4 py-3 shadow-lg">
-            <BrandLockup className="h-10 w-auto object-contain" />
+          <div className="inline-flex rounded-2xl bg-white px-6 py-5 shadow-lg">
+            <BrandLockup className="h-20 w-auto object-contain" />
           </div>
         </div>
 
