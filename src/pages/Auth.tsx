@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { ArrowRight, Mic, FileText, ShieldCheck } from "lucide-react";
-import { BrandMark, BrandLockup } from "@/components/BrandLogo";
+import { BrandLockup } from "@/components/BrandLogo";
 
 const FEATURES = [
   { icon: Mic, text: "Record consultations with real-time, medical-grade transcription" },
@@ -57,13 +57,9 @@ const Auth = () => {
         <div className="pointer-events-none absolute bottom-0 left-0 h-64 w-64 rounded-full bg-accent/10 blur-3xl" />
 
         {/* Logo */}
-        <div className="relative flex items-center gap-3">
-          <BrandMark tone="light" className="h-9 w-9" />
-          <div className="leading-tight">
-            <p className="font-heading text-xl font-bold tracking-tight">NoteMD</p>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-white/60">
-              Clinical Documentation Solutions
-            </p>
+        <div className="relative">
+          <div className="inline-flex rounded-xl bg-white px-4 py-3 shadow-lg">
+            <BrandLockup className="h-10 w-auto object-contain" />
           </div>
         </div>
 
