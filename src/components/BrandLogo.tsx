@@ -53,8 +53,22 @@ export const BrandMark = ({
   );
 };
 
+// Full colour logo lockup — for light backgrounds (sidebar, platform).
 export const BrandLockup = ({ className }: { className?: string }) => (
-  <img src="/noteMD.png" alt="NoteMD — Clinical Documentation Solutions" className={className} />
+  <img
+    src="/notemdcolor.png"
+    alt="NoteMD — Clinical Documentation Solutions"
+    className={className}
+  />
+);
+
+// All-white logo lockup — for dark backgrounds (login hero panel).
+export const BrandLockupWhite = ({ className }: { className?: string }) => (
+  <img
+    src="/notemdwhite.png"
+    alt="NoteMD — Clinical Documentation Solutions"
+    className={className}
+  />
 );
 
 export default BrandMark;

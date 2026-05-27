@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { ArrowRight, Mic, FileText, ShieldCheck } from "lucide-react";
-import { BrandLockup } from "@/components/BrandLogo";
+import { BrandLockup, BrandLockupWhite } from "@/components/BrandLogo";
 
 const FEATURES = [
   { icon: Mic, text: "Record consultations with real-time, medical-grade transcription" },
@@ -56,11 +56,9 @@ const Auth = () => {
         <div className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full bg-white/5 blur-3xl" />
         <div className="pointer-events-none absolute bottom-0 left-0 h-64 w-64 rounded-full bg-accent/10 blur-3xl" />
 
-        {/* Logo */}
+        {/* Logo — white version directly on the gradient */}
         <div className="relative">
-          <div className="inline-flex rounded-2xl bg-white px-6 py-5 shadow-lg">
-            <BrandLockup className="h-20 w-auto object-contain" />
-          </div>
+          <BrandLockupWhite className="h-20 w-auto object-contain" />
         </div>
 
         {/* Hero copy */}
