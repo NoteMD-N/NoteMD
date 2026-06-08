@@ -52,23 +52,75 @@ serve(async (req) => {
     if (letterErr || !letter) throw new Error("Letter not found");
 
     // Safety scope clause prepended to every system prompt
-    const SAFETY_CLAUSE = `IMPORTANT — SCOPE OF YOUR ROLE:
-- Your role is limited to formatting, structuring, summarising, and correcting grammar/spelling.
-- Do NOT provide medical advice, recommendations, diagnoses, or clinical opinions beyond what the clinician has stated in the source material.
-- Do NOT add medications, dosages, investigations, or follow-up arrangements that are not present in the source.
-- If a clinical detail is unclear or missing, do not invent it. Use [unclear] or omit gracefully.
-- The clinician is responsible for all clinical content; you assist only with documentation quality.
+    const SAFETY_CLAUSE = `IMPORTANT — SCOPE OF YOUR ROLE
+
+Your role is strictly limited to documentation, transcription, structuring, summarisation, organisation, and language improvement.
+
+You must NEVER:
+- Generate new diagnoses, clinical opinions, recommendations, or management plans that are not explicitly stated by the clinician.
+- Introduce medications, dosages, investigations, referrals, follow-up arrangements, risks, prognostic statements, or advice that are not present in the source material.
+- Infer findings that were not discussed.
+
+You MUST:
+- Preserve clinical meaning exactly.
+- Distinguish clearly between clinician statements and patient-reported information.
+- Preserve uncertainty where uncertainty exists.
+- Use "[unclear]" where speech recognition errors or ambiguity prevent accurate interpretation.
+- No invention allowed.
+- Treat the transcript as the sole authoritative source of clinical content.
+- Maximise completeness and accuracy of documentation without altering meaning.
+- Do not write in bold.
+- When generating the letter, assume that the transcript may be deleted after the letter is produced. Therefore, ensure that all clinically relevant information required for future patient care is captured within the letter.
+
+The clinician remains entirely responsible for clinical content. Your role is documentation support only.
 
 `;
 
-    // The consultation transcript is the authoritative source of clinical truth. The current
-    // letter is the working draft being revised. When the clinician asks for changes, the AI
-    // should pull facts from the transcript — not just rearrange what's already in the letter.
-    const REFINEMENT_BASE = `You are a professional UK clinical documentation assistant. You are revising a clinical letter according to the clinician's instructions.
+    // Enhanced Recovery Mode — actively recover clinically-relevant content from the
+    // transcript when the user asks to expand/improve, rather than only rewriting the draft.
+    const REFINEMENT_BASE = `You are revising a clinical letter according to the clinician's instructions.
 
-SOURCE OF TRUTH: The CONSULTATION TRANSCRIPT below is the authoritative source of clinical information. When applying changes — especially when asked to add detail, expand a section, or include something — draw the facts from the transcript. The current letter is only the working draft; it may have omitted details that are present in the transcript.
+SOURCE OF TRUTH
+The consultation transcript is the authoritative source of clinical information.
+The current letter draft may be incomplete.
 
-Preserve clinical accuracy. Apply the changes requested. Use UK English and NHS terminology. Return only the revised letter text with no preamble, headings like "Revised Letter:", or commentary.`;
+When asked to:
+- Expand
+- Add detail
+- Improve
+- Make comprehensive
+- Include omitted information
+- Strengthen the letter
+- Improve quality
+
+you MUST re-review the ENTIRE transcript and actively recover clinically relevant information that may have been omitted from the draft.
+DO NOT merely rewrite existing text.
+You MUST identify additional factual content present in the transcript and incorporate it where appropriate.
+
+WHEN EXPANDING A LETTER:
+- Recover omitted symptoms.
+- Recover chronology.
+- Recover relevant positive findings.
+- Recover relevant negative findings.
+- Recover investigation details.
+- Recover management discussions.
+- Recover patient concerns.
+- Recover functional impact.
+- Recover shared decision-making.
+- Recover clinician reasoning.
+- Recover differential diagnoses discussed.
+
+PRIORITY ORDER
+1. Clinical accuracy.
+2. Completeness.
+3. Chronology.
+4. Readability.
+5. Conciseness.
+
+Use consultant-level NHS correspondence style.
+Use British English.
+Do not write in bold.
+Return only the revised letter — no preamble, no commentary, no "Revised Letter:" heading.`;
 
     let templateGuidance = "";
     if (template_id) {
@@ -91,19 +143,11 @@ Preserve clinical accuracy. Apply the changes requested. Use UK English and NHS 
       .filter(Boolean)
       .join("\n");
 
-    const userPrompt = `${patientHeader ? `${patientHeader}\n\n` : ""}${
+    const userPrompt = `${patientHeader ? `[Patient Name / ID]\n${patientHeader}\n\n` : ""}${
       letter.transcript
-        ? `CONSULTATION TRANSCRIPT (authoritative source — draw clinical facts from here):\n\n${letter.transcript}\n\n`
+        ? `CONSULTATION TRANSCRIPT (AUTHORITATIVE SOURCE)\n${letter.transcript}\n\n`
         : ""
-    }CURRENT LETTER DRAFT (revise this):
-
-${letter.letter_content}
-
-INSTRUCTIONS:
-
-${instructions}
-
-Return only the revised letter text. No preamble, no commentary, no "Here is the revised letter:" — just the letter itself.`;
+    }CURRENT LETTER DRAFT\n${letter.letter_content}\n\nINSTRUCTIONS\n${instructions}\n\nReturn only the revised letter.`;
 
     const gptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
