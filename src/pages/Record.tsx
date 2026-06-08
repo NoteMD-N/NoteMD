@@ -725,12 +725,30 @@ const Record = () => {
       const { data: fnData, error: fnError } = await fnPromise;
 
       if (fnError) {
+        // Supabase wraps the body in a FunctionsHttpError — pull the actual server message out so
+        // we can show it to the user instead of the generic "non-2xx" text.
+        let serverMessage = "";
+        try {
+          const ctx = (fnError as any).context;
+          if (ctx?.json) {
+            const body = await ctx.json();
+            serverMessage = body?.error || "";
+          } else if (ctx?.text) {
+            const body = await ctx.text();
+            try {
+              serverMessage = JSON.parse(body)?.error || body;
+            } catch {
+              serverMessage = body;
+            }
+          }
+        } catch {
+          /* couldn't parse body */
+        }
+        console.error("Edge function returned error:", { message: fnError.message, serverMessage });
         // Don't immediately fail — the server may have completed and Realtime will catch it.
-        // But also surface the error after a short grace period in case nothing comes through.
-        console.error("Edge function returned error:", fnError);
         setTimeout(() => {
           if (!navigated) {
-            toast.error(fnError.message || "Letter generation failed");
+            toast.error(serverMessage || fnError.message || "Letter generation failed");
             setProcessing(false);
             setProcessingStatus("");
             if (realtimeChannel) {

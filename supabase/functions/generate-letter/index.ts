@@ -660,7 +660,15 @@ The clinician remains entirely responsible for clinical content. Your role is do
       const errText = await gptResponse.text();
       console.error("GPT error:", errText);
       await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
-      throw new Error(`Letter generation failed: ${errText}`);
+      // Extract a short, user-readable reason if the OpenAI response is JSON
+      let short = errText.slice(0, 200);
+      try {
+        const parsed = JSON.parse(errText);
+        short = parsed?.error?.message || parsed?.message || short;
+      } catch {
+        /* not JSON */
+      }
+      throw new Error(`Letter generation failed: ${short}`);
     }
 
     const gptData = await gptResponse.json();
