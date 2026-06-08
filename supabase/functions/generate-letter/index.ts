@@ -7,6 +7,139 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// ============================================================
+// GCP identity token (for Cloud Run private service auth)
+// ============================================================
+async function getGcpIdentityToken(serviceAccountKey: string, targetAudience: string): Promise<string> {
+  const sa = JSON.parse(serviceAccountKey);
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "RS256", typ: "JWT" };
+  const claims = {
+    iss: sa.client_email,
+    sub: sa.client_email,
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+    target_audience: targetAudience,
+  };
+  const encode = (obj: unknown) =>
+    btoa(JSON.stringify(obj)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  const unsignedToken = `${encode(header)}.${encode(claims)}`;
+  const pemContent = sa.private_key
+    .replace("-----BEGIN PRIVATE KEY-----", "")
+    .replace("-----END PRIVATE KEY-----", "")
+    .replace(/\n/g, "");
+  const binaryKey = Uint8Array.from(atob(pemContent), (c) => c.charCodeAt(0));
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8",
+    binaryKey,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    new TextEncoder().encode(unsignedToken)
+  );
+  const sig = btoa(String.fromCharCode(...new Uint8Array(signature)))
+    .replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  const jwt = `${unsignedToken}.${sig}`;
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
+  });
+  if (!tokenResponse.ok) {
+    throw new Error(`GCP token exchange failed: ${await tokenResponse.text()}`);
+  }
+  const { id_token } = await tokenResponse.json();
+  return id_token;
+}
+
+const CONTENT_TYPE_MAP: Record<string, string> = {
+  webm: "audio/webm",
+  wav: "audio/wav",
+  mp3: "audio/mpeg",
+  mpeg: "audio/mpeg",
+  m4a: "audio/mp4",
+  mp4: "audio/mp4",
+  ogg: "audio/ogg",
+};
+
+function contentTypeFor(path: string): string {
+  const ext = (path.split(".").pop() || "webm").toLowerCase();
+  return CONTENT_TYPE_MAP[ext] || "audio/webm";
+}
+
+// Dictation transcription: medical-domain ASR via private Cloud Run service.
+async function transcribeDictation(audioBlob: Blob, audioPath: string): Promise<string> {
+  const MEDASR_URL = Deno.env.get("MEDASR_URL");
+  const GCP_SERVICE_ACCOUNT_KEY = Deno.env.get("GCP_SERVICE_ACCOUNT_KEY");
+  const MEDASR_API_KEY = Deno.env.get("MEDASR_API_KEY");
+  if (!MEDASR_URL) throw new Error("Dictation transcription service is not configured");
+
+  const headers: Record<string, string> = {};
+  if (GCP_SERVICE_ACCOUNT_KEY) {
+    const idToken = await getGcpIdentityToken(GCP_SERVICE_ACCOUNT_KEY, MEDASR_URL);
+    headers["Authorization"] = `Bearer ${idToken}`;
+  } else if (MEDASR_API_KEY) {
+    headers["Authorization"] = `Bearer ${MEDASR_API_KEY}`;
+  }
+
+  const formData = new FormData();
+  formData.append("file", audioBlob, `audio.${audioPath.split(".").pop() || "webm"}`);
+
+  const resp = await fetch(`${MEDASR_URL}/transcribe`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    console.error("[transcribe-dictation] HTTP", resp.status, body.slice(0, 500));
+    throw new Error(`Dictation transcription failed (HTTP ${resp.status})`);
+  }
+  const result = await resp.json();
+  const text = (result.text || "").trim();
+  if (!text) throw new Error("Dictation transcription returned no speech");
+  return text;
+}
+
+// Consultation transcription: streaming-provider's pre-recorded endpoint.
+async function transcribeConsultation(audioBlob: Blob, audioPath: string): Promise<string> {
+  const DEEPGRAM_API_KEY = Deno.env.get("DEEPGRAM_API_KEY");
+  if (!DEEPGRAM_API_KEY) throw new Error("Consultation transcription service is not configured");
+
+  const contentType = contentTypeFor(audioPath);
+  const arrayBuffer = await audioBlob.arrayBuffer();
+
+  const params = new URLSearchParams({
+    model: "nova-2-medical",
+    language: "en-GB",
+    smart_format: "true",
+    punctuate: "true",
+    paragraphs: "true",
+  });
+  const resp = await fetch(`https://api.deepgram.com/v1/listen?${params}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Token ${DEEPGRAM_API_KEY}`,
+      "Content-Type": contentType,
+    },
+    body: arrayBuffer,
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    console.error("[transcribe-consultation] HTTP", resp.status, body.slice(0, 500));
+    throw new Error(`Consultation transcription failed (HTTP ${resp.status})`);
+  }
+  const result = await resp.json();
+  const text = (result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "").trim();
+  if (!text) throw new Error("Consultation transcription returned no speech");
+  return text;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -16,11 +149,6 @@ serve(async (req) => {
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     if (!OPENAI_API_KEY) {
       throw new Error("OPENAI_API_KEY is not configured");
-    }
-
-    const DEEPGRAM_API_KEY = Deno.env.get("DEEPGRAM_API_KEY");
-    if (!DEEPGRAM_API_KEY) {
-      throw new Error("Transcription service is not configured");
     }
 
     const authHeader = req.headers.get("Authorization");
@@ -62,93 +190,79 @@ serve(async (req) => {
       throw new Error("recording_id is required");
     }
 
-    let transcript: string;
+    let transcript = "";
+    const clientTranscript = (preBuiltTranscript || "").trim();
+    const isDictation = mode === "dictation";
 
-    // Use the supplied (live + user-edited) transcript when available. Otherwise transcribe the
-    // full audio file (uploaded files, or the signal-drop fallback path where the client passes
-    // transcript=undefined to guarantee a complete record).
-    const needsTranscription = !preBuiltTranscript;
+    // Decide whether we need server-side transcription:
+    //  - Dictation: always re-transcribe with the medical ASR engine (preferred for accuracy).
+    //  - Consultation: only re-transcribe if the client didn't supply a transcript (uploaded file
+    //    or signal-drop fallback). Live, user-edited transcript wins otherwise.
+    const needsServerTranscription = isDictation || !clientTranscript;
 
-    if (!needsTranscription) {
-      transcript = preBuiltTranscript;
-      await supabase
-        .from("recordings")
-        .update({ status: "transcribed" })
-        .eq("id", recording_id);
-    } else {
+    if (needsServerTranscription) {
       if (!audio_path) {
-        throw new Error("audio_path is required when transcript is not provided");
-      }
-
-      // Download audio from storage
-      const { data: audioData, error: downloadError } = await supabase.storage
-        .from("audio-recordings")
-        .download(audio_path);
-      if (downloadError) throw new Error(`Failed to download audio: ${downloadError.message}`);
-
-      await supabase
-        .from("recordings")
-        .update({ status: "processing" })
-        .eq("id", recording_id);
-
-      // Transcribe the full audio file via the pre-recorded transcription API.
-      // Determine content type from file extension (webm from recordings, others from uploads).
-      const ext = (audio_path.split(".").pop() || "webm").toLowerCase();
-      const contentTypeMap: Record<string, string> = {
-        webm: "audio/webm",
-        wav: "audio/wav",
-        mp3: "audio/mpeg",
-        mpeg: "audio/mpeg",
-        m4a: "audio/mp4",
-        mp4: "audio/mp4",
-        ogg: "audio/ogg",
-      };
-      const contentType = contentTypeMap[ext] || "audio/webm";
-
-      const audioBuffer = await audioData.arrayBuffer();
-
-      const dgParams = new URLSearchParams({
-        model: "nova-2-medical",
-        language: "en-GB",
-        smart_format: "true",
-        punctuate: "true",
-        paragraphs: "true",
-      });
-
-      const dgResponse = await fetch(
-        `https://api.deepgram.com/v1/listen?${dgParams}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Token ${DEEPGRAM_API_KEY}`,
-            "Content-Type": contentType,
-          },
-          body: audioBuffer,
+        if (clientTranscript) {
+          // No audio to fall back to — accept the client transcript rather than erroring.
+          transcript = clientTranscript;
+        } else {
+          throw new Error("audio_path is required when transcript is not provided");
         }
-      );
+      } else {
+        // Download audio from storage
+        console.log(`[generate-letter] Downloading audio: ${audio_path} (mode=${mode || "consultation"})`);
+        const { data: audioData, error: downloadError } = await supabase.storage
+          .from("audio-recordings")
+          .download(audio_path);
+        if (downloadError) {
+          // If the download fails but we have a client transcript, use it instead of failing hard.
+          console.error(`[generate-letter] Audio download failed: ${downloadError.message}`);
+          if (clientTranscript) {
+            console.log("[generate-letter] Falling back to client transcript");
+            transcript = clientTranscript;
+          } else {
+            throw new Error(`Failed to download audio: ${downloadError.message}`);
+          }
+        } else {
+          await supabase
+            .from("recordings")
+            .update({ status: "processing" })
+            .eq("id", recording_id);
 
-      if (!dgResponse.ok) {
-        const errText = await dgResponse.text();
-        console.error("Transcription error:", errText);
-        await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
-        throw new Error("Transcription failed. Please try again.");
+          try {
+            transcript = isDictation
+              ? await transcribeDictation(audioData, audio_path)
+              : await transcribeConsultation(audioData, audio_path);
+            console.log(`[generate-letter] Server transcription succeeded (${transcript.length} chars)`);
+          } catch (err) {
+            console.error("[generate-letter] Server transcription failed:", err);
+            // If the user has an on-screen transcript (e.g. live capture before a disconnect),
+            // use it as a fallback so the doctor never ends up with a blank letter.
+            if (clientTranscript) {
+              console.log("[generate-letter] Falling back to client transcript");
+              transcript = clientTranscript;
+            } else {
+              await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
+              throw new Error(
+                "Could not transcribe the audio. Please try recording again."
+              );
+            }
+          }
+        }
       }
-
-      const dgResult = await dgResponse.json();
-      transcript =
-        dgResult?.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? "";
-
-      if (!transcript.trim()) {
-        console.error("Transcription returned empty result");
-        await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
-        throw new Error("No speech could be detected in the recording.");
-      }
-
-      await supabase
-        .from("recordings")
-        .update({ status: "transcribed" })
-        .eq("id", recording_id);
+    } else {
+      transcript = clientTranscript;
     }
+
+    if (!transcript.trim()) {
+      await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
+      throw new Error("No transcript available to generate a letter.");
+    }
+
+    await supabase
+      .from("recordings")
+      .update({ status: "transcribed" })
+      .eq("id", recording_id);
 
     // Step 2: Generate clinical letter
     // Resolve template: explicit template_id → user's default for mode → global preset fallback

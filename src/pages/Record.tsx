@@ -604,13 +604,16 @@ const Record = () => {
   const processAudio = async (audioBlob: Blob, audioTranscript?: string) => {
     setProcessing(true);
 
-    // If a disconnect occurred during recording, the live transcript may have gaps.
-    // Discard it and force the server to re-transcribe the full audio with MedASR.
+    // Always send the on-screen transcript to the server as a fallback. The server decides
+    // whether to use it (consultation) or to re-transcribe with the dictation engine.
+    // If a disconnect occurred during recording, the user is warned on the review screen.
     const disconnectOccurred = hadDisconnectRef.current;
-    const safeTranscript = disconnectOccurred ? undefined : audioTranscript;
+    const fallbackTranscript = audioTranscript;
 
     if (disconnectOccurred) {
-      setProcessingStatus("Connection issues detected — running full transcription for accuracy...");
+      setProcessingStatus(
+        "Connection drop detected — using what was captured to generate your letter..."
+      );
     } else {
       setProcessingStatus("Preparing recording...");
     }
@@ -637,7 +640,7 @@ const Record = () => {
       // Create recording row first so we have an ID
       setProcessingStatus(
         disconnectOccurred
-          ? "Saving recording — re-transcribing for accuracy..."
+          ? "Saving recording..."
           : "Creating recording..."
       );
       const { data: recording, error: recError } = await supabase
@@ -687,25 +690,18 @@ const Record = () => {
           if (error) console.error("Background upload failed:", error);
         });
 
-      // We need audio in storage when:
-      // - There's no live transcript at all (uploaded file, or no Deepgram capture)
-      // - A disconnect happened (forcing full re-transcription via MedASR)
-      const needsAudioUpload = !safeTranscript || disconnectOccurred;
+      // We need to await the audio upload when the server is expected to transcribe it:
+      // - Dictation mode (server always re-transcribes for accuracy)
+      // - Consultation with no live transcript (uploaded files, or full-disconnect)
+      const willServerTranscribe =
+        modeRef.current === "dictation" || !fallbackTranscript;
 
-      if (needsAudioUpload) {
-        setProcessingStatus(
-          disconnectOccurred
-            ? "Uploading audio for full transcription..."
-            : "Uploading audio..."
-        );
+      if (willServerTranscribe) {
+        setProcessingStatus("Uploading audio...");
         await uploadPromise;
       }
 
-      setProcessingStatus(
-        disconnectOccurred
-          ? "Re-transcribing full recording for accuracy..."
-          : "Generating clinical letter..."
-      );
+      setProcessingStatus("Generating clinical letter...");
 
       // Fire the edge function. We don't strictly need the response to navigate (Realtime will
       // fire when the letter is created), but a successful response lets us navigate faster.
@@ -714,7 +710,9 @@ const Record = () => {
           body: {
             recording_id: recording.id,
             audio_path: fileName,
-            transcript: safeTranscript || undefined,
+            // Always send the on-screen transcript — server uses it for consultation, and as a
+            // fallback for dictation if server-side transcription fails.
+            transcript: fallbackTranscript || undefined,
             mode: modeRef.current,
             patient_name: patientName || undefined,
             patient_id: patientId || undefined,
@@ -744,11 +742,7 @@ const Record = () => {
         return;
       }
 
-      if (disconnectOccurred) {
-        toast.success("Letter generated using full re-transcription for accuracy");
-      } else {
-        toast.success("Letter generated successfully!");
-      }
+      toast.success("Letter generated successfully!");
       if (fnData?.letter_id) navigateOnce(fnData.letter_id);
     } catch (error: any) {
       toast.error(error.message || "Failed to process recording");
@@ -1264,10 +1258,9 @@ const Record = () => {
                   <div className="mb-4 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-300 flex gap-2">
                     <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                     <div>
-                      <strong>Connection dropped during recording.</strong> The live transcript
-                      below may have gaps. To guarantee a complete letter, the audio will be
-                      re-transcribed in full when you click Generate. This adds a few seconds but
-                      ensures nothing is missed.
+                      <strong>Connection dropped during recording.</strong> Please check the
+                      transcript below carefully — there may be missing detail near the dropout.
+                      Edit anything you need to add before clicking Generate.
                     </div>
                   </div>
                 )}
