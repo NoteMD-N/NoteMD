@@ -65,14 +65,17 @@ const AppSidebar = () => {
   return (
     <Sidebar variant="floating" collapsible="icon">
       <SidebarHeader>
-        {/* Full logo lockup — spans the full sidebar width when expanded */}
-        <NavLink to="/dashboard" className="block group-data-[collapsible=icon]:hidden">
-          <BrandLockup className="w-full h-auto object-contain" />
+        {/* Full logo lockup — centred and capped when the sidebar is expanded */}
+        <NavLink
+          to="/dashboard"
+          className="block py-2 group-data-[collapsible=icon]:hidden"
+        >
+          <BrandLockup className="mx-auto max-h-14 w-auto object-contain" />
         </NavLink>
         {/* Compact mark — centred when the sidebar is collapsed to icons */}
         <NavLink
           to="/dashboard"
-          className="hidden justify-center group-data-[collapsible=icon]:flex"
+          className="hidden justify-center py-1 group-data-[collapsible=icon]:flex"
         >
           <BrandMark className="h-8 w-8 shrink-0" />
         </NavLink>

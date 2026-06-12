@@ -13,9 +13,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Mic, FileText, Clock, BarChart3, ArrowRight, User } from "lucide-react";
+import { Mic, FileText, Clock, BarChart3, ArrowRight, User, Sparkles } from "lucide-react";
 import { format, startOfMonth } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
+import { BrandLockup } from "@/components/BrandLogo";
 
 const statusColors: Record<string, string> = {
   uploaded: "bg-muted text-muted-foreground",
@@ -77,14 +78,43 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-3">
-      {/* Welcome header */}
-      <div className="px-1 pt-1">
-        <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">
-          {firstName ? `Welcome back, ${firstName}` : "Dashboard"}
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Your recordings and generated letters at a glance
-        </p>
+      {/* Welcome hero — branded gradient with prominent logo */}
+      <div className="relative overflow-hidden rounded-2xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)] gradient-hero">
+        {/* decorative glows */}
+        <div className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full bg-white/5 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-20 -left-10 h-64 w-64 rounded-full bg-accent/15 blur-3xl" />
+
+        <div className="relative flex flex-col gap-6 p-6 sm:p-8 md:flex-row md:items-center md:justify-between">
+          <div className="flex-1 text-white">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-white/80 backdrop-blur-sm mb-3">
+              <Sparkles className="h-3 w-3" />
+              Clinical Documentation Suite
+            </div>
+            <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight">
+              {firstName ? `Welcome back, ${firstName}` : "Welcome to NoteMD"}
+            </h1>
+            <p className="mt-2 text-sm sm:text-base text-white/70 max-w-md">
+              Record consultations, review transcripts, and generate polished clinical letters —
+              all from one place.
+            </p>
+            <div className="mt-5">
+              <Button
+                onClick={() => navigate("/record")}
+                size="lg"
+                className="gap-2 rounded-xl bg-white text-primary hover:bg-white/90 shadow-lg"
+              >
+                <Mic className="h-4 w-4" />
+                New Recording
+              </Button>
+            </div>
+          </div>
+          {/* Logo lockup in a frosted card */}
+          <div className="shrink-0 hidden sm:block">
+            <div className="rounded-2xl bg-white px-6 py-5 shadow-xl">
+              <BrandLockup className="h-16 w-auto object-contain" />
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Summary cards */}
