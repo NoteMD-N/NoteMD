@@ -90,6 +90,7 @@ const LetterView = () => {
       .from("templates")
       .select("*")
       .order("is_preset", { ascending: false })
+      .order("sort_order", { ascending: true })
       .order("name")
       .then(({ data }) => {
         if (data) setTemplates(data);

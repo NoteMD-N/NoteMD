@@ -20,6 +20,9 @@ const Settings = () => {
   const queryClient = useQueryClient();
 
   const [fullName, setFullName] = useState("");
+  const [roleTitle, setRoleTitle] = useState("");
+  const [hospitalOrg, setHospitalOrg] = useState("");
+  const [dictationEngine, setDictationEngine] = useState<"fast" | "accurate">("accurate");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -69,6 +72,9 @@ const Settings = () => {
     if (profile) {
       setAutoSendEnabled(profile.auto_send_enabled ?? false);
       setRecipients(profile.auto_send_recipients ?? []);
+      if (!roleTitle) setRoleTitle((profile as any).role_title ?? "");
+      if (!hospitalOrg) setHospitalOrg((profile as any).hospital_organisation ?? "");
+      setDictationEngine(((profile as any).dictation_engine as "fast" | "accurate") ?? "accurate");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile]);
@@ -76,11 +82,11 @@ const Settings = () => {
   const isSecretary = !!profile?.clinician_id;
 
   const profileMutation = useMutation({
-    mutationFn: async (name: string) => {
+    mutationFn: async (updates: { full_name?: string; role_title?: string | null; hospital_organisation?: string | null }) => {
       if (!user) throw new Error("Not authenticated");
       const { error } = await supabase
         .from("profiles")
-        .update({ full_name: name })
+        .update(updates)
         .eq("user_id", user.id);
       if (error) throw error;
     },
@@ -91,6 +97,22 @@ const Settings = () => {
     onError: () => {
       toast.error("Failed to update profile");
     },
+  });
+
+  const dictationEngineMutation = useMutation({
+    mutationFn: async (engine: "fast" | "accurate") => {
+      if (!user) throw new Error("Not authenticated");
+      const { error } = await supabase
+        .from("profiles")
+        .update({ dictation_engine: engine } as any)
+        .eq("user_id", user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
+      toast.success("Dictation engine updated");
+    },
+    onError: () => toast.error("Failed to update dictation engine"),
   });
 
   const passwordMutation = useMutation({
@@ -163,7 +185,11 @@ const Settings = () => {
       toast.error("Name cannot be empty");
       return;
     }
-    profileMutation.mutate(fullName.trim());
+    profileMutation.mutate({
+      full_name: fullName.trim(),
+      role_title: roleTitle.trim() || null,
+      hospital_organisation: hospitalOrg.trim() || null,
+    });
   };
 
   const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
@@ -461,11 +487,75 @@ const Settings = () => {
                     />
                   </div>
 
-                  {/* Role */}
+                  {/* Role / Title */}
                   <div className="space-y-2">
-                    <Label>Role</Label>
-                    <div>
-                      <Badge variant="secondary">{profile?.role || "doctor"}</Badge>
+                    <Label htmlFor="roleTitle">Role / Title</Label>
+                    <Input
+                      id="roleTitle"
+                      value={roleTitle}
+                      onChange={(e) => setRoleTitle(e.target.value)}
+                      placeholder="e.g. Consultant Neurologist, GP, Specialist Nurse"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Appears in the signature of generated letters.
+                    </p>
+                  </div>
+
+                  {/* Hospital / Organisation */}
+                  <div className="space-y-2">
+                    <Label htmlFor="hospitalOrg">Hospital / Organisation</Label>
+                    <Input
+                      id="hospitalOrg"
+                      value={hospitalOrg}
+                      onChange={(e) => setHospitalOrg(e.target.value)}
+                      placeholder="e.g. Royal Free London NHS Foundation Trust"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Appears alongside your name in letter headers and signatures.
+                    </p>
+                  </div>
+
+                  {/* Dictation Engine preference */}
+                  <div className="space-y-2 rounded-lg border border-border/60 p-3">
+                    <Label>Dictation Transcription Engine</Label>
+                    <p className="text-xs text-muted-foreground -mt-1">
+                      Choose how dictation is transcribed. You can change this any time.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDictationEngine("fast");
+                          dictationEngineMutation.mutate("fast");
+                        }}
+                        className={`text-left rounded-lg border p-3 transition-colors ${
+                          dictationEngine === "fast"
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-border/80"
+                        }`}
+                      >
+                        <p className="font-medium text-sm">Fast (live)</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Near real-time transcript. Best for speed.
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDictationEngine("accurate");
+                          dictationEngineMutation.mutate("accurate");
+                        }}
+                        className={`text-left rounded-lg border p-3 transition-colors ${
+                          dictationEngine === "accurate"
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-border/80"
+                        }`}
+                      >
+                        <p className="font-medium text-sm">Accurate (medical)</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Medical-domain model. Best for clinical terminology.
+                        </p>
+                      </button>
                     </div>
                   </div>
 

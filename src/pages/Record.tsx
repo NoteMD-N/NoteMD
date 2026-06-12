@@ -45,6 +45,7 @@ import {
   Eye,
   Pencil,
   Sparkles,
+  Mail,
 } from "lucide-react";
 
 type RecordMode = "consultation" | "dictation";
@@ -94,6 +95,7 @@ const Record = () => {
         .from("templates")
         .select("*")
         .order("is_preset", { ascending: false })
+        .order("sort_order", { ascending: true })
         .order("name");
       if (error) throw error;
       return data as Template[];
@@ -511,33 +513,85 @@ const Record = () => {
 
   const pauseRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state === "recording") {
+    if (!recorder) return;
+    if (recorder.state !== "recording") return;
+    try {
       recorder.pause();
-      setIsPaused(true);
-      elapsedBeforePauseRef.current = elapsed;
-      if (timerRef.current) clearInterval(timerRef.current);
-      // KeepAlive interval continues to prevent Deepgram timeout
+    } catch (e) {
+      console.error("[record] pause() failed", e);
     }
+    setIsPaused(true);
+    elapsedBeforePauseRef.current = elapsed;
+    if (timerRef.current) clearInterval(timerRef.current);
+    // KeepAlive interval continues so Deepgram doesn't time out during the pause.
   }, [elapsed]);
 
   const resumeRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state === "paused") {
-      try {
-        recorder.resume();
-        setIsPaused(false);
-        const startTime = Date.now();
-        if (timerRef.current) clearInterval(timerRef.current);
-        timerRef.current = setInterval(() => {
-          setElapsed(
-            elapsedBeforePauseRef.current +
-              Math.floor((Date.now() - startTime) / 1000)
-          );
-        }, 1000);
-      } catch (e) {
-        console.error("Failed to resume recording", e);
-        toast.error("Could not resume. Please stop and start again.");
+    if (!recorder) {
+      toast.error("Recording was lost. Please start a new one.");
+      setIsPaused(false);
+      setIsRecording(false);
+      return;
+    }
+
+    // If somehow already recording, just update UI and bail.
+    if (recorder.state === "recording") {
+      setIsPaused(false);
+      return;
+    }
+
+    if (recorder.state !== "paused") {
+      console.warn(`[record] Cannot resume from state: ${recorder.state}`);
+      toast.error("Recording is in an unexpected state. Please stop and start a new one.");
+      return;
+    }
+
+    // Make sure the underlying mic track is still alive — iOS / browsers may suspend it
+    // if the tab was backgrounded or the audio session was interrupted.
+    const trackLive = streamRef.current?.getTracks().some((t) => t.readyState === "live");
+    if (!trackLive) {
+      console.warn("[record] Mic track not live — cannot resume cleanly");
+      toast.error("The microphone disconnected. Please stop and start a new one.");
+      return;
+    }
+
+    try {
+      recorder.resume();
+    } catch (e) {
+      console.error("[record] resume() failed", e);
+      toast.error("Could not resume. Please stop and start a new one.");
+      return;
+    }
+
+    // Some browsers silently ignore resume(). Verify it actually transitioned and warn if not.
+    setTimeout(() => {
+      const r = mediaRecorderRef.current;
+      if (r && r.state !== "recording") {
+        console.warn(`[record] resume() did not transition state — state=${r.state}`);
+        toast.error("Browser didn't resume recording. Please stop and start a new one.");
+        setIsPaused(true);
       }
+    }, 300);
+
+    setIsPaused(false);
+
+    // Restart wall-clock timer for the elapsed display.
+    const startTime = Date.now();
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setElapsed(
+        elapsedBeforePauseRef.current + Math.floor((Date.now() - startTime) / 1000)
+      );
+    }, 1000);
+
+    // If the Deepgram WS dropped during the pause (KeepAlive failed, browser idle, etc.),
+    // trigger a reconnect so the live transcript resumes.
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.log("[record] WS not open after resume — reconnecting");
+      reconnectAttemptRef.current = 0;
+      scheduleReconnectRef.current();
     }
   }, []);
 
@@ -728,15 +782,19 @@ const Record = () => {
         // Supabase wraps the body in a FunctionsHttpError — pull the actual server message out so
         // we can show it to the user instead of the generic "non-2xx" text.
         let serverMessage = "";
+        let quotaExceeded = false;
         try {
           const ctx = (fnError as any).context;
           if (ctx?.json) {
             const body = await ctx.json();
             serverMessage = body?.error || "";
+            quotaExceeded = !!body?.quota_exceeded;
           } else if (ctx?.text) {
             const body = await ctx.text();
             try {
-              serverMessage = JSON.parse(body)?.error || body;
+              const parsed = JSON.parse(body);
+              serverMessage = parsed?.error || body;
+              quotaExceeded = !!parsed?.quota_exceeded;
             } catch {
               serverMessage = body;
             }
@@ -744,7 +802,18 @@ const Record = () => {
         } catch {
           /* couldn't parse body */
         }
-        console.error("Edge function returned error:", { message: fnError.message, serverMessage });
+        console.error("Edge function returned error:", { message: fnError.message, serverMessage, quotaExceeded });
+        if (quotaExceeded) {
+          toast.error(serverMessage || "Monthly letter quota reached. Upgrade to continue.");
+          setProcessing(false);
+          setProcessingStatus("");
+          if (realtimeChannel) {
+            supabase.removeChannel(realtimeChannel);
+            realtimeChannel = null;
+          }
+          setTimeout(() => navigate("/settings/billing"), 1500);
+          return;
+        }
         // Don't immediately fail — the server may have completed and Realtime will catch it.
         setTimeout(() => {
           if (!navigated) {
@@ -790,6 +859,41 @@ const Record = () => {
     // For dictation mode, server will re-transcribe with MedASR regardless; we still send the edited
     // transcript as a fallback. For consultation, we use the edited transcript directly.
     await processAudio(blob, editableTranscript || undefined);
+  };
+
+  // Email the raw transcript to the user's saved recipients
+  const [emailingTranscript, setEmailingTranscript] = useState(false);
+  const handleEmailTranscript = async () => {
+    if (!editableTranscript.trim()) {
+      toast.error("No transcript to send");
+      return;
+    }
+    setEmailingTranscript(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-transcript-email", {
+        body: {
+          transcript: editableTranscript.trim(),
+          patient_name: patientName || undefined,
+          patient_id: patientId || undefined,
+        },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.not_configured) {
+        toast.error("Email isn't set up yet. Add a sending domain to enable it.");
+        return;
+      }
+      if (data?.error) throw new Error(data.error);
+      toast.success(`Transcript emailed to ${data.sent_to?.length || 0} recipient(s)`);
+    } catch (err: any) {
+      const msg = err.message || "Failed to send transcript";
+      if (msg.includes("No recipient")) {
+        toast.error("No recipients saved. Add addresses in Settings → Email.");
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setEmailingTranscript(false);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -998,6 +1102,18 @@ const Record = () => {
                     or clone a preset to customise.
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Consultation recording tip */}
+          {stage === "record" && mode === "consultation" && !isRecording && !hasStopped && !processing && (
+            <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-xl p-3 text-xs text-blue-900 dark:text-blue-200 flex gap-2">
+              <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+              <div>
+                <strong>Tip for best letters:</strong> at the end of the consultation, briefly
+                summarise the diagnosis, any medications you prescribed or suggested, and the
+                management plan. The AI uses this summary as a backbone for the letter.
               </div>
             </div>
           )}
@@ -1243,11 +1359,11 @@ const Record = () => {
                     Review Transcript
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Fix typos, correct misheard medications, or clean up the transcript before the
-                    AI writes your letter.
+                    Focus on diagnoses and medications — make sure they're captured correctly.
+                    Don't worry about minor typos or grammar; the AI handles those.
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Button
                     variant="ghost"
                     onClick={() => setStage("record")}
@@ -1256,6 +1372,20 @@ const Record = () => {
                   >
                     <ChevronLeft className="h-4 w-4" />
                     Back
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleEmailTranscript}
+                    disabled={processing || emailingTranscript || !editableTranscript.trim()}
+                    className="gap-2"
+                    title="Email the raw transcript to your saved recipients"
+                  >
+                    {emailingTranscript ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Mail className="h-4 w-4" />
+                    )}
+                    Email Transcript
                   </Button>
                   <Button
                     onClick={handleGenerateFromReview}
@@ -1272,6 +1402,16 @@ const Record = () => {
                 </div>
               </div>
               <div className="p-6">
+                {mode === "consultation" && (
+                  <div className="mb-4 px-3 py-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 text-xs text-blue-900 dark:text-blue-200 flex gap-2">
+                    <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+                    <div>
+                      <strong>Check the end of the transcript</strong> for the summary section
+                      (diagnosis, medications, plan) if you recorded one. That section is the
+                      most important for letter accuracy.
+                    </div>
+                  </div>
+                )}
                 {hadDisconnectRef.current && (
                   <div className="mb-4 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-300 flex gap-2">
                     <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />

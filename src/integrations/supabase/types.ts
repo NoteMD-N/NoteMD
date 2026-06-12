@@ -70,10 +70,14 @@ export type Database = {
           auto_send_recipients: string[]
           clinician_id: string | null
           created_at: string
+          dictation_engine: string
           full_name: string | null
+          hospital_organisation: string | null
           id: string
           letter_template: string | null
           role: string
+          role_title: string | null
+          stripe_customer_id: string | null
           updated_at: string
           user_id: string
         }
@@ -82,10 +86,14 @@ export type Database = {
           auto_send_recipients?: string[]
           clinician_id?: string | null
           created_at?: string
+          dictation_engine?: string
           full_name?: string | null
+          hospital_organisation?: string | null
           id?: string
           letter_template?: string | null
           role?: string
+          role_title?: string | null
+          stripe_customer_id?: string | null
           updated_at?: string
           user_id: string
         }
@@ -94,10 +102,14 @@ export type Database = {
           auto_send_recipients?: string[]
           clinician_id?: string | null
           created_at?: string
+          dictation_engine?: string
           full_name?: string | null
+          hospital_organisation?: string | null
           id?: string
           letter_template?: string | null
           role?: string
+          role_title?: string | null
+          stripe_customer_id?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -140,6 +152,42 @@ export type Database = {
           patient_name?: string | null
           status?: string
           template_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          created_at: string
+          current_period_end: string | null
+          id: string
+          letters_per_month: number
+          plan: string
+          status: string
+          stripe_subscription_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_period_end?: string | null
+          id?: string
+          letters_per_month?: number
+          plan?: string
+          status?: string
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          current_period_end?: string | null
+          id?: string
+          letters_per_month?: number
+          plan?: string
+          status?: string
+          stripe_subscription_id?: string | null
           updated_at?: string
           user_id?: string
         }

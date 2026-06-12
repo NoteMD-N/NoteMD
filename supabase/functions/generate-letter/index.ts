@@ -190,15 +190,61 @@ serve(async (req) => {
       throw new Error("recording_id is required");
     }
 
+    // Monthly letter quota — gate generation when the free quota is reached and the user
+    // doesn't have an active subscription.
+    const { data: subscription } = await supabase
+      .from("subscriptions")
+      .select("plan, status, letters_per_month")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    const lettersPerMonth = subscription?.letters_per_month ?? 20;
+    const isActive = subscription?.status === "active" || subscription?.status === "trialing";
+    const isFreeTier = !subscription || subscription.plan === "free" || !isActive;
+
+    if (isFreeTier) {
+      const { data: usageRow } = await supabase
+        .from("letter_usage_current_month")
+        .select("letters_this_month")
+        .eq("user_id", userId)
+        .maybeSingle();
+      const used = usageRow?.letters_this_month ?? 0;
+      if (used >= lettersPerMonth) {
+        return new Response(
+          JSON.stringify({
+            error: `You've used your ${lettersPerMonth} free letters for this month. Upgrade to keep generating.`,
+            quota_exceeded: true,
+            used,
+            limit: lettersPerMonth,
+          }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     let transcript = "";
     const clientTranscript = (preBuiltTranscript || "").trim();
     const isDictation = mode === "dictation";
 
+    // Look up the user's dictation engine preference ('fast' = streaming provider,
+    // 'accurate' = medical ASR). Defaults to 'accurate' when not set.
+    let dictationEngine: "fast" | "accurate" = "accurate";
+    if (isDictation) {
+      const { data: prefRow } = await supabase
+        .from("profiles")
+        .select("dictation_engine")
+        .eq("user_id", userId)
+        .maybeSingle();
+      const v = (prefRow as any)?.dictation_engine;
+      if (v === "fast" || v === "accurate") dictationEngine = v;
+    }
+
     // Decide whether we need server-side transcription:
-    //  - Dictation: always re-transcribe with the medical ASR engine (preferred for accuracy).
-    //  - Consultation: only re-transcribe if the client didn't supply a transcript (uploaded file
-    //    or signal-drop fallback). Live, user-edited transcript wins otherwise.
-    const needsServerTranscription = isDictation || !clientTranscript;
+    //  - Dictation (accurate engine): re-transcribe via medical ASR.
+    //  - Dictation (fast engine): trust the client transcript if present.
+    //  - Consultation: only re-transcribe if no client transcript (uploaded file or full drop).
+    const needsServerTranscription =
+      (isDictation && dictationEngine === "accurate") || !clientTranscript;
 
     if (needsServerTranscription) {
       if (!audio_path) {
@@ -230,7 +276,8 @@ serve(async (req) => {
             .eq("id", recording_id);
 
           try {
-            transcript = isDictation
+            const useMedicalEngine = isDictation && dictationEngine === "accurate";
+            transcript = useMedicalEngine
               ? await transcribeDictation(audioData, audio_path)
               : await transcribeConsultation(audioData, audio_path);
             console.log(`[generate-letter] Server transcription succeeded (${transcript.length} chars)`);
@@ -295,6 +342,27 @@ serve(async (req) => {
     ]
       .filter(Boolean)
       .join("\n");
+
+    // Pull the clinician's display details so the AI can populate the letter signature.
+    const { data: clinicianProfile } = await supabase
+      .from("profiles")
+      .select("full_name, role_title, hospital_organisation")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    const clinicianBlock = [
+      clinicianProfile?.full_name ? `Clinician: Dr ${clinicianProfile.full_name}` : null,
+      clinicianProfile?.role_title ? `Role: ${clinicianProfile.role_title}` : null,
+      clinicianProfile?.hospital_organisation
+        ? `Hospital / Organisation: ${clinicianProfile.hospital_organisation}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const signatureGuidance = clinicianBlock
+      ? `\n\nCLINICIAN DETAILS (use these in the letter signature exactly as written; do not invent or alter):\n${clinicianBlock}\n`
+      : "";
 
     const defaultConsultationPrompt = `You are an expert UK clinical documentation assistant specialising in consultant-level outpatient correspondence.
 Your task is to convert consultation transcripts into highly detailed, comprehensive, professional clinic letters suitable for communication between hospital specialists, general practitioners, multidisciplinary teams, and future treating clinicians.
@@ -633,7 +701,7 @@ The clinician remains entirely responsible for clinical content. Your role is do
       ? defaultDictationPrompt
       : defaultConsultationPrompt;
 
-    const systemPrompt = SAFETY_CLAUSE + basePrompt;
+    const systemPrompt = SAFETY_CLAUSE + basePrompt + signatureGuidance;
 
     const userPrompt = mode === "dictation"
       ? `Please correct and enhance the following dictated note into a structured professional clinical document.\n\n[TRANSCRIPT]\n${transcript}`

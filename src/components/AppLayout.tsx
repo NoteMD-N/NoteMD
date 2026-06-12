@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Mic } from "lucide-react";
 import AppSidebar from "@/components/AppSidebar";
+import { BrandMark } from "@/components/BrandLogo";
 
 const routeLabels: Record<string, string> = {
   dashboard: "Dashboard",
@@ -40,11 +41,22 @@ const AppLayout = () => {
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar />
         {/* Content column — floating layout with breathing room */}
-        <div className="flex min-w-0 flex-1 flex-col gap-2 py-2 pr-3 pl-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-2 py-2 pr-2 sm:pr-3 pl-2 sm:pl-3">
           {/* Floating header bar */}
-          <header className="flex h-14 shrink-0 items-center gap-2 rounded-2xl border border-border/60 bg-card px-4 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
-            <SidebarTrigger className="-ml-1" />
-            <Breadcrumb className="flex-1">
+          <header className="flex h-14 shrink-0 items-center gap-2 sm:gap-3 rounded-2xl border border-border/60 bg-card px-3 sm:px-4 shadow-[0_1px_3px_rgba(21,33,52,0.04)] min-w-0">
+            <SidebarTrigger className="-ml-1 shrink-0" />
+            <Link
+              to="/dashboard"
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity shrink-0"
+              title="NoteMD home"
+            >
+              <BrandMark className="h-7 w-7" />
+              <span className="font-heading text-sm font-bold tracking-tight text-foreground hidden sm:inline">
+                NoteMD
+              </span>
+            </Link>
+            <div className="h-5 w-px bg-border/60 hidden sm:block shrink-0" />
+            <Breadcrumb className="flex-1 min-w-0 overflow-hidden">
               <BreadcrumbList>
                 {breadcrumbs.map((crumb, i) => (
                   <span key={crumb.path} className="flex items-center gap-1.5">
@@ -62,7 +74,7 @@ const AppLayout = () => {
                 ))}
               </BreadcrumbList>
             </Breadcrumb>
-            <Button onClick={() => navigate("/record")} size="sm" className="gap-2 rounded-xl">
+            <Button onClick={() => navigate("/record")} size="sm" className="gap-2 rounded-xl shrink-0">
               <Mic className="h-4 w-4" />
               <span className="hidden sm:inline">New Recording</span>
             </Button>

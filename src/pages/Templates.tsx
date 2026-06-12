@@ -97,6 +97,7 @@ const Templates = () => {
         .from("templates")
         .select("*")
         .order("is_preset", { ascending: false })
+        .order("sort_order", { ascending: true })
         .order("name", { ascending: true });
       if (error) throw error;
       return data as Template[];
