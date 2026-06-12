@@ -190,35 +190,42 @@ serve(async (req) => {
       throw new Error("recording_id is required");
     }
 
-    // Monthly letter quota — gate generation when the free quota is reached and the user
-    // doesn't have an active subscription.
-    const { data: subscription } = await supabase
-      .from("subscriptions")
-      .select("plan, status, letters_per_month")
-      .eq("user_id", userId)
-      .maybeSingle();
+    // Monthly letter quota — only enforced once Stripe is fully configured AND the user
+    // is not flagged as quota-exempt. This avoids accidentally blocking real users in
+    // dev/staging or while billing is still being wired up.
+    const billingConfigured = !!Deno.env.get("STRIPE_PRICE_ID") &&
+      !!Deno.env.get("STRIPE_SECRET_KEY");
 
-    const lettersPerMonth = subscription?.letters_per_month ?? 20;
-    const isActive = subscription?.status === "active" || subscription?.status === "trialing";
-    const isFreeTier = !subscription || subscription.plan === "free" || !isActive;
-
-    if (isFreeTier) {
-      const { data: usageRow } = await supabase
-        .from("letter_usage_current_month")
-        .select("letters_this_month")
+    if (billingConfigured) {
+      const { data: subscription } = await supabase
+        .from("subscriptions")
+        .select("plan, status, letters_per_month, quota_exempt")
         .eq("user_id", userId)
         .maybeSingle();
-      const used = usageRow?.letters_this_month ?? 0;
-      if (used >= lettersPerMonth) {
-        return new Response(
-          JSON.stringify({
-            error: `You've used your ${lettersPerMonth} free letters for this month. Upgrade to keep generating.`,
-            quota_exceeded: true,
-            used,
-            limit: lettersPerMonth,
-          }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+
+      const isExempt = (subscription as any)?.quota_exempt === true;
+      const lettersPerMonth = subscription?.letters_per_month ?? 20;
+      const isActive = subscription?.status === "active" || subscription?.status === "trialing";
+      const isFreeTier = !subscription || subscription.plan === "free" || !isActive;
+
+      if (!isExempt && isFreeTier) {
+        const { data: usageRow } = await supabase
+          .from("letter_usage_current_month")
+          .select("letters_this_month")
+          .eq("user_id", userId)
+          .maybeSingle();
+        const used = usageRow?.letters_this_month ?? 0;
+        if (used >= lettersPerMonth) {
+          return new Response(
+            JSON.stringify({
+              error: `You've used your ${lettersPerMonth} free letters for this month. Upgrade to keep generating.`,
+              quota_exceeded: true,
+              used,
+              limit: lettersPerMonth,
+            }),
+            { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
       }
     }
 
