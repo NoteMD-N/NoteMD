@@ -954,7 +954,7 @@ const Record = () => {
   return (
     <div className="">
       <div>
-        <div className="max-w-5xl mx-auto space-y-4">
+        <div className="space-y-4">
           {/* Top bar: mode toggle + connection status */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
@@ -992,7 +992,7 @@ const Record = () => {
 
           {/* Patient info + template */}
           {stage === "record" && (
-            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 space-y-4">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)] p-4 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="patientName" className="text-xs font-medium text-slate-600 dark:text-slate-400">
@@ -1119,9 +1119,9 @@ const Record = () => {
           )}
 
           {stage === "record" && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4 items-stretch">
             {/* Left panel — Recording controls */}
-            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-8">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)] p-6">
               <div className="flex flex-col items-center gap-6">
                 {/* Status label */}
                 <div
@@ -1285,8 +1285,8 @@ const Record = () => {
             </div>
 
             {/* Right panel — Live transcript */}
-            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col">
-              <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)] flex flex-col min-h-[640px]">
+              <div className="px-6 py-4 border-b border-border/60 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Live Transcript
                 </h3>
@@ -1318,7 +1318,7 @@ const Record = () => {
                 )}
               </div>
 
-              <div className="flex-1 min-h-[300px] max-h-[500px] overflow-y-auto p-4 flex flex-col">
+              <div className="flex-1 overflow-y-auto p-5 flex flex-col">
                 <Textarea
                   value={transcript}
                   onChange={(e) => {
@@ -1352,7 +1352,7 @@ const Record = () => {
 
           {/* Review stage */}
           {stage === "review" && (
-            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
               <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4 flex-wrap">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
