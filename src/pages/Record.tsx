@@ -147,6 +147,10 @@ const Record = () => {
   const lastMessageAtRef = useRef<number>(Date.now());
   const healthCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isStoppingRef = useRef(false);
+  // Soft-pause flag — when true, audio chunks still arrive from MediaRecorder but
+  // are not forwarded to the streaming transcription service. Far more reliable
+  // than MediaRecorder.pause()/resume() which silently fails on some browsers.
+  const isPausedRef = useRef(false);
   const scheduleReconnectRef = useRef<() => void>(() => {});
   // Tracks whether the WebSocket dropped during this recording. If true, we'll
   // re-transcribe the full audio with MedASR on stop to guarantee completeness.
@@ -405,6 +409,7 @@ const Record = () => {
       pendingChunksRef.current = [];
       reconnectAttemptRef.current = 0;
       isStoppingRef.current = false;
+      isPausedRef.current = false;
       hadDisconnectRef.current = false;
       setBufferedSeconds(0);
       setStreamHealth("connected");
@@ -430,7 +435,12 @@ const Record = () => {
         if (e.data.size === 0) return;
         chunksRef.current.push(e.data);
 
-        // Only stream to Deepgram when actively recording (not paused)
+        // Soft pause: while paused we stop forwarding to the transcription service
+        // (so the live transcript stops) but the MediaRecorder keeps running so the
+        // audio file stays continuous and pause/resume is reliable across browsers.
+        if (isPausedRef.current) return;
+
+        // Also skip when MediaRecorder isn't in "recording" state (e.g. while stopping)
         if (recorder.state !== "recording") return;
 
         const currentWs = wsRef.current;
@@ -511,69 +521,28 @@ const Record = () => {
     }
   }, [openWebSocket, attachWebSocketHandlers, scheduleReconnect, requestWakeLock, isStarting]);
 
+  // Pause/resume use a soft flag rather than MediaRecorder.pause()/resume(), which
+  // silently fails on iOS Safari and some Chrome versions when the audio session
+  // hiccups. With the flag, MediaRecorder keeps running uninterrupted and we just
+  // stop forwarding chunks to the transcription service while paused.
   const pauseRecording = useCallback(() => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder) return;
-    if (recorder.state !== "recording") return;
-    try {
-      recorder.pause();
-    } catch (e) {
-      console.error("[record] pause() failed", e);
-    }
+    if (!mediaRecorderRef.current) return;
+    isPausedRef.current = true;
     setIsPaused(true);
     elapsedBeforePauseRef.current = elapsed;
     if (timerRef.current) clearInterval(timerRef.current);
-    // KeepAlive interval continues so Deepgram doesn't time out during the pause.
+    // KeepAlive interval keeps the transcription socket alive during the pause.
   }, [elapsed]);
 
   const resumeRecording = useCallback(() => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder) {
+    if (!mediaRecorderRef.current) {
       toast.error("Recording was lost. Please start a new one.");
       setIsPaused(false);
       setIsRecording(false);
       return;
     }
 
-    // If somehow already recording, just update UI and bail.
-    if (recorder.state === "recording") {
-      setIsPaused(false);
-      return;
-    }
-
-    if (recorder.state !== "paused") {
-      console.warn(`[record] Cannot resume from state: ${recorder.state}`);
-      toast.error("Recording is in an unexpected state. Please stop and start a new one.");
-      return;
-    }
-
-    // Make sure the underlying mic track is still alive — iOS / browsers may suspend it
-    // if the tab was backgrounded or the audio session was interrupted.
-    const trackLive = streamRef.current?.getTracks().some((t) => t.readyState === "live");
-    if (!trackLive) {
-      console.warn("[record] Mic track not live — cannot resume cleanly");
-      toast.error("The microphone disconnected. Please stop and start a new one.");
-      return;
-    }
-
-    try {
-      recorder.resume();
-    } catch (e) {
-      console.error("[record] resume() failed", e);
-      toast.error("Could not resume. Please stop and start a new one.");
-      return;
-    }
-
-    // Some browsers silently ignore resume(). Verify it actually transitioned and warn if not.
-    setTimeout(() => {
-      const r = mediaRecorderRef.current;
-      if (r && r.state !== "recording") {
-        console.warn(`[record] resume() did not transition state — state=${r.state}`);
-        toast.error("Browser didn't resume recording. Please stop and start a new one.");
-        setIsPaused(true);
-      }
-    }, 300);
-
+    isPausedRef.current = false;
     setIsPaused(false);
 
     // Restart wall-clock timer for the elapsed display.
@@ -585,8 +554,8 @@ const Record = () => {
       );
     }, 1000);
 
-    // If the Deepgram WS dropped during the pause (KeepAlive failed, browser idle, etc.),
-    // trigger a reconnect so the live transcript resumes.
+    // If the transcription WS dropped during the pause (KeepAlive failed, browser
+    // idle, etc.), trigger a reconnect so the live transcript resumes.
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       console.log("[record] WS not open after resume — reconnecting");
@@ -597,6 +566,7 @@ const Record = () => {
 
   const cleanup = useCallback(() => {
     isStoppingRef.current = true;
+    isPausedRef.current = false;
 
     if (timerRef.current) clearInterval(timerRef.current);
     if (keepAliveRef.current) clearInterval(keepAliveRef.current);
