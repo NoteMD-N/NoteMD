@@ -23,6 +23,7 @@ const Settings = () => {
   const [roleTitle, setRoleTitle] = useState("");
   const [hospitalOrg, setHospitalOrg] = useState("");
   const [dictationEngine, setDictationEngine] = useState<"fast" | "accurate">("accurate");
+  const [skipDictationReview, setSkipDictationReview] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -75,6 +76,7 @@ const Settings = () => {
       if (!roleTitle) setRoleTitle((profile as any).role_title ?? "");
       if (!hospitalOrg) setHospitalOrg((profile as any).hospital_organisation ?? "");
       setDictationEngine(((profile as any).dictation_engine as "fast" | "accurate") ?? "accurate");
+      setSkipDictationReview(!!(profile as any).skip_dictation_review);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile]);
@@ -113,6 +115,22 @@ const Settings = () => {
       toast.success("Dictation engine updated");
     },
     onError: () => toast.error("Failed to update dictation engine"),
+  });
+
+  const skipReviewMutation = useMutation({
+    mutationFn: async (skip: boolean) => {
+      if (!user) throw new Error("Not authenticated");
+      const { error } = await supabase
+        .from("profiles")
+        .update({ skip_dictation_review: skip } as any)
+        .eq("user_id", user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
+      toast.success("Preference saved");
+    },
+    onError: () => toast.error("Failed to save preference"),
   });
 
   const passwordMutation = useMutation({
@@ -557,6 +575,25 @@ const Settings = () => {
                         </p>
                       </button>
                     </div>
+                  </div>
+
+                  {/* Skip review step for dictation */}
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 p-3">
+                    <div>
+                      <p className="font-medium text-sm">Skip review step for dictation</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        When on, dictation goes straight from Stop to letter generation —
+                        no transcript preview. Faster, but you can't edit before the AI
+                        writes the letter.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={skipDictationReview}
+                      onCheckedChange={(v) => {
+                        setSkipDictationReview(v);
+                        skipReviewMutation.mutate(v);
+                      }}
+                    />
                   </div>
 
                   <Button

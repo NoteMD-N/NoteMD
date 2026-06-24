@@ -28,7 +28,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Mic, Search, MoreHorizontal, FileText, Trash2 } from "lucide-react";
+import { Mic, Search, MoreHorizontal, FileText, Trash2, Sparkles, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
@@ -78,6 +78,52 @@ const Recordings = () => {
       toast.error("Failed to delete recording");
     },
   });
+
+  // (Re-)generate a letter for an existing recording. Used both when there's no
+  // letter yet ("Generate Letter") and when one exists ("Regenerate Letter").
+  // If an existing letter is present, it's deleted first so generate-letter
+  // can create a fresh one without violating any unique constraints.
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const handleGenerateForRecording = async (rec: any, existingLetterId: string | null) => {
+    setGeneratingId(rec.id);
+    try {
+      if (existingLetterId) {
+        await supabase.from("letters").delete().eq("id", existingLetterId);
+      }
+      const { data, error } = await supabase.functions.invoke("generate-letter", {
+        body: {
+          recording_id: rec.id,
+          audio_path: rec.audio_path,
+          mode: rec.mode || "consultation",
+          patient_name: rec.patient_name || undefined,
+          patient_id: rec.patient_id || undefined,
+          template_id: rec.template_id || undefined,
+        },
+      });
+      if (error) {
+        // Pull the real server error out of the response body
+        let serverMessage = error.message;
+        try {
+          const ctx = (error as any).context;
+          if (ctx?.json) serverMessage = (await ctx.json())?.error || serverMessage;
+          else if (ctx?.text) {
+            const body = await ctx.text();
+            try { serverMessage = JSON.parse(body)?.error || body; } catch { serverMessage = body; }
+          }
+        } catch {/* ignore */}
+        throw new Error(serverMessage);
+      }
+      if (data?.error) throw new Error(data.error);
+
+      toast.success(existingLetterId ? "Letter regenerated" : "Letter generated");
+      queryClient.invalidateQueries({ queryKey: ["recordings-with-letters"] });
+      if (data?.letter_id) navigate(`/letter/${data.letter_id}`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to generate letter");
+    } finally {
+      setGeneratingId(null);
+    }
+  };
 
   const filtered = recordings.filter((rec) => {
     const q = search.toLowerCase();
@@ -222,6 +268,17 @@ const Recordings = () => {
                                 View Letter
                               </DropdownMenuItem>
                             )}
+                            <DropdownMenuItem
+                              disabled={generatingId === rec.id || !rec.audio_path}
+                              onClick={() => handleGenerateForRecording(rec, letter?.id ?? null)}
+                            >
+                              {generatingId === rec.id ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Sparkles className="mr-2 h-4 w-4" />
+                              )}
+                              {letter ? "Regenerate Letter" : "Generate Letter"}
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => deleteMutation.mutate(rec.id)}
                               className="text-destructive focus:text-destructive"

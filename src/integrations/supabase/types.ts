@@ -77,6 +77,7 @@ export type Database = {
           letter_template: string | null
           role: string
           role_title: string | null
+          skip_dictation_review: boolean
           stripe_customer_id: string | null
           updated_at: string
           user_id: string
@@ -93,6 +94,7 @@ export type Database = {
           letter_template?: string | null
           role?: string
           role_title?: string | null
+          skip_dictation_review?: boolean
           stripe_customer_id?: string | null
           updated_at?: string
           user_id: string
@@ -109,6 +111,7 @@ export type Database = {
           letter_template?: string | null
           role?: string
           role_title?: string | null
+          skip_dictation_review?: boolean
           stripe_customer_id?: string | null
           updated_at?: string
           user_id?: string

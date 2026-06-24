@@ -102,6 +102,22 @@ const Record = () => {
     },
   });
 
+  // Fetch the user's "skip review for dictation" preference
+  const { data: userPref } = useQuery({
+    queryKey: ["user-record-pref"],
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { skip_dictation_review: false };
+      const { data } = await supabase
+        .from("profiles")
+        .select("skip_dictation_review")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      return { skip_dictation_review: !!(data as any)?.skip_dictation_review };
+    },
+  });
+  const skipDictationReview = userPref?.skip_dictation_review ?? false;
+
   const templatesForMode = useMemo(
     () => templates.filter((t) => t.mode === mode),
     [templates, mode]
@@ -881,13 +897,71 @@ const Record = () => {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleDiscard = () => {
+  // Discard returns to a fresh recording state. Before wiping the in-memory data,
+  // save whatever was captured as a draft recording (with the transcript as a draft
+  // letter) so the user can recover it later from the Recordings or Letters list.
+  const [discarding, setDiscarding] = useState(false);
+  const handleDiscard = async () => {
+    const transcriptToSave = (transcript || transcriptRef.current || "").trim();
+    const audioBlob = chunksRef.current.length > 0
+      ? new Blob(chunksRef.current, { type: "audio/webm" })
+      : null;
+
+    // If there's anything worth saving, persist it as a draft before clearing.
+    if (transcriptToSave || audioBlob) {
+      setDiscarding(true);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          let audioPath: string | null = null;
+          if (audioBlob) {
+            audioPath = `${user.id}/${Date.now()}-draft.webm`;
+            await supabase.storage.from("audio-recordings").upload(audioPath, audioBlob);
+          }
+          const { data: recording } = await supabase
+            .from("recordings")
+            .insert({
+              user_id: user.id,
+              audio_path: audioPath ?? "",
+              status: "draft",
+              duration_seconds: elapsed,
+              patient_name: patientName || null,
+              patient_id: patientId || null,
+              mode: modeRef.current,
+              template_id: selectedTemplateId,
+            })
+            .select()
+            .single();
+          if (recording && transcriptToSave) {
+            await supabase.from("letters").insert({
+              recording_id: recording.id,
+              user_id: user.id,
+              transcript: transcriptToSave,
+              letter_content: null,
+              status: "draft",
+              patient_name: patientName || null,
+              patient_id: patientId || null,
+              template_id: selectedTemplateId || null,
+            });
+          }
+          toast.success("Saved as a draft — you can find it in Recordings or Letters.");
+        }
+      } catch (e) {
+        console.error("[record] Failed to save discard draft:", e);
+        toast.error("Couldn't save as a draft — discarding anyway.");
+      } finally {
+        setDiscarding(false);
+      }
+    }
+
     chunksRef.current = [];
     setElapsed(0);
     setHasRecording(false);
     setTranscript("");
     setInterimText("");
     transcriptRef.current = "";
+    setEditableTranscript("");
+    setStage("record");
   };
 
   const formatTime = (s: number) =>
@@ -897,6 +971,26 @@ const Record = () => {
   const hasTranscript = transcript.length > 0 || interimText.length > 0;
   const canToggleMode = !isRecording && !hasStopped && !processing;
   const canEditPatient = !isRecording && !processing;
+
+  // Auto-process when dictation finishes and the user has opted to skip the
+  // review step. Fires exactly once when `hasStopped` flips true.
+  const autoProcessFiredRef = useRef(false);
+  useEffect(() => {
+    if (!hasStopped) {
+      autoProcessFiredRef.current = false;
+      return;
+    }
+    if (autoProcessFiredRef.current) return;
+    if (processing) return;
+    if (modeRef.current !== "dictation") return;
+    if (!skipDictationReview) return;
+    if (chunksRef.current.length === 0) return;
+
+    autoProcessFiredRef.current = true;
+    const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+    processAudio(blob, transcriptRef.current || undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasStopped, skipDictationReview]);
 
   const connectionMeta = {
     good: {
@@ -1216,19 +1310,28 @@ const Record = () => {
                 )}
 
                 {hasStopped && !processing && (
-                  <div className="w-full space-y-2 pt-2">
+                  <div className="w-full space-y-3 pt-2">
                     <Button onClick={goToReview} className="w-full gap-2 h-11">
                       Review Transcript
                       <ChevronRight className="h-4 w-4" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      onClick={handleDiscard}
-                      className="w-full gap-2 text-slate-500 hover:text-slate-700"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      Discard & Re-record
-                    </Button>
+                    {/* Discard separated visually so accidental clicks are unlikely.
+                        Auto-saves as a draft before clearing — see handleDiscard. */}
+                    <div className="pt-3 border-t border-border/40 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={handleDiscard}
+                        disabled={discarding}
+                        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                      >
+                        {discarding ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RotateCcw className="h-3 w-3" />
+                        )}
+                        {discarding ? "Saving draft..." : "Discard (saves as draft)"}
+                      </button>
+                    </div>
                   </div>
                 )}
 
