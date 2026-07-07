@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import AppLayout from "@/components/AppLayout";
 import Auth from "./pages/Auth";
+import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
 import Record from "./pages/Record";
 import LetterView from "./pages/LetterView";
@@ -34,7 +35,7 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<Landing />} />
             <Route path="/auth" element={<AuthRedirect />} />
             <Route
               element={
