@@ -180,6 +180,10 @@ serve(async (req) => {
       recording_id,
       audio_path,
       transcript: preBuiltTranscript,
+      // When present, the client has already run transcription (e.g. medical ASR
+      // via the transcribe-audio function). We trust the transcript as-is and
+      // skip server-side re-transcription.
+      transcript_source,
       mode,
       patient_name,
       patient_id,
@@ -247,11 +251,17 @@ serve(async (req) => {
     }
 
     // Decide whether we need server-side transcription:
+    //  - If the client explicitly says the transcript is authoritative
+    //    (transcript_source === "medical" or "client"), trust it — no re-transcribe.
     //  - Dictation (accurate engine): re-transcribe via medical ASR.
     //  - Dictation (fast engine): trust the client transcript if present.
     //  - Consultation: only re-transcribe if no client transcript (uploaded file or full drop).
-    const needsServerTranscription =
-      (isDictation && dictationEngine === "accurate") || !clientTranscript;
+    const clientProvidedFinalTranscript =
+      !!clientTranscript &&
+      (transcript_source === "medical" || transcript_source === "client");
+    const needsServerTranscription = clientProvidedFinalTranscript
+      ? false
+      : (isDictation && dictationEngine === "accurate") || !clientTranscript;
 
     if (needsServerTranscription) {
       if (!audio_path) {

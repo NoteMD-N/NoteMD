@@ -86,6 +86,10 @@ const Record = () => {
   const [streamHealth, setStreamHealth] = useState<StreamHealth>("connected");
   const [bufferedSeconds, setBufferedSeconds] = useState(0);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // For accurate dictation we transcribe the finished audio with MedASR after
+  // Stop rather than streaming a Deepgram draft that later gets replaced.
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcribeError, setTranscribeError] = useState<string | null>(null);
 
   // Fetch templates
   const { data: templates = [] } = useQuery({
@@ -110,13 +114,23 @@ const Record = () => {
       if (!user) return { skip_dictation_review: false };
       const { data } = await supabase
         .from("profiles")
-        .select("skip_dictation_review")
+        .select("skip_dictation_review, dictation_engine")
         .eq("user_id", user.id)
         .maybeSingle();
-      return { skip_dictation_review: !!(data as any)?.skip_dictation_review };
+      return {
+        skip_dictation_review: !!(data as any)?.skip_dictation_review,
+        dictation_engine: ((data as any)?.dictation_engine as "fast" | "accurate") ?? "accurate",
+      };
     },
   });
   const skipDictationReview = userPref?.skip_dictation_review ?? false;
+  const dictationEngine = userPref?.dictation_engine ?? "accurate";
+
+  // When the user has picked the accurate medical engine for dictation, we skip
+  // the live streaming provider entirely and transcribe the finished audio with
+  // MedASR after Stop. This gives ONE transcript (from the same engine that
+  // powers letter generation) rather than a Deepgram draft that gets replaced.
+  const useMedicalDictation = mode === "dictation" && dictationEngine === "accurate";
 
   const templatesForMode = useMemo(
     () => templates.filter((t) => t.mode === mode),
@@ -156,6 +170,13 @@ const Record = () => {
   const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const deepgramKeyRef = useRef<string | null>(null);
   const modeRef = useRef<RecordMode>(mode);
+  // Mirror of useMedicalDictation for use inside stable event handlers whose
+  // effects only run once (window online listener, etc).
+  const useMedicalDictationRef = useRef(false);
+  // When accurate dictation uploads the finished audio to transcribe-audio, we
+  // remember the storage path so processAudio can reuse it instead of uploading
+  // the same blob a second time when the user hits Generate.
+  const medicalUploadPathRef = useRef<string | null>(null);
   // WebSocket reconnection state
   const pendingChunksRef = useRef<Blob[]>([]); // chunks captured during disconnect
   const reconnectAttemptRef = useRef(0);
@@ -178,11 +199,22 @@ const Record = () => {
   }, [mode]);
 
   useEffect(() => {
+    useMedicalDictationRef.current = useMedicalDictation;
+  }, [useMedicalDictation]);
+
+  useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript, interimText]);
 
-  // Pre-warm Deepgram token on mount
+  // Pre-warm Deepgram token on mount, unless we know the user will be using
+  // the accurate medical engine (which uses batch transcription after Stop
+  // and never opens a Deepgram stream).
   useEffect(() => {
+    if (useMedicalDictation) {
+      // Signal "ready" so the Start button isn't disabled — we don't need Deepgram.
+      setDeepgramReady(true);
+      return;
+    }
     (async () => {
       try {
         const { data, error } = await supabase.functions.invoke("deepgram-token");
@@ -194,7 +226,7 @@ const Record = () => {
         console.error("Failed to pre-warm Deepgram token", e);
       }
     })();
-  }, []);
+  }, [useMedicalDictation]);
 
   // Connection quality monitor
   useEffect(() => {
@@ -229,7 +261,10 @@ const Record = () => {
 
     const onOnline = () => {
       setConnectionQuality("good");
-      // If we're recording and the WS is dead, trigger immediate reconnect
+      // If we're recording and the WS is dead, trigger immediate reconnect.
+      // Skip when we're using the accurate medical engine — there's no live
+      // transcription stream to reconnect to.
+      if (useMedicalDictationRef.current) return;
       if (mediaRecorderRef.current &&
           (mediaRecorderRef.current.state === "recording" || mediaRecorderRef.current.state === "paused") &&
           (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) {
@@ -430,15 +465,26 @@ const Record = () => {
       setBufferedSeconds(0);
       setStreamHealth("connected");
 
-      // Connect Deepgram and get mic in parallel
-      const [ws, stream] = await Promise.all([
-        openWebSocket(),
-        navigator.mediaDevices.getUserMedia({ audio: true }),
-      ]);
+      // For accurate dictation we intentionally skip the live streaming provider —
+      // the audio will be transcribed after Stop with the medical engine so the
+      // user only ever sees one transcript. For everything else we open the WS
+      // and mic in parallel for the fastest start.
+      let ws: WebSocket | null = null;
+      let stream: MediaStream;
+      if (useMedicalDictation) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } else {
+        const [w, s] = await Promise.all([
+          openWebSocket(),
+          navigator.mediaDevices.getUserMedia({ audio: true }),
+        ]);
+        ws = w;
+        stream = s;
+      }
       wsRef.current = ws;
       streamRef.current = stream;
       chunksRef.current = [];
-      attachWebSocketHandlers(ws);
+      if (ws) attachWebSocketHandlers(ws);
 
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
@@ -634,6 +680,64 @@ const Record = () => {
     releaseWakeLock();
   }, [cleanup, releaseWakeLock]);
 
+  // For accurate dictation: upload the finished audio and get the MedASR
+  // transcript back so the user only ever sees the "real" transcript. The
+  // resulting text populates both `transcript` (so the record card reflects it)
+  // and `editableTranscript` (so review is pre-filled).
+  const transcribeFinishedAudioForMedical = useCallback(async () => {
+    if (chunksRef.current.length === 0) {
+      setTranscribeError("No audio was captured.");
+      return null;
+    }
+    setIsTranscribing(true);
+    setTranscribeError(null);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+      const fileName = `${user.id}/${Date.now()}.webm`;
+
+      const { error: upErr } = await supabase.storage
+        .from("audio-recordings")
+        .upload(fileName, blob);
+      if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
+
+      const { data, error } = await supabase.functions.invoke("transcribe-audio", {
+        body: { audio_path: fileName, engine: "accurate" },
+      });
+      if (error) {
+        let serverMessage = error.message;
+        try {
+          const ctx = (error as any).context;
+          if (ctx?.json) serverMessage = (await ctx.json())?.error || serverMessage;
+          else if (ctx?.text) {
+            const body = await ctx.text();
+            try { serverMessage = JSON.parse(body)?.error || body; } catch { serverMessage = body; }
+          }
+        } catch {/* ignore */}
+        throw new Error(serverMessage);
+      }
+      if (data?.error) throw new Error(data.error);
+
+      const text = (data?.transcript || "").trim();
+      if (!text) throw new Error("No speech detected");
+
+      transcriptRef.current = text;
+      setTranscript(text);
+      setEditableTranscript(text);
+      medicalUploadPathRef.current = fileName;
+      return { text, audio_path: fileName };
+    } catch (err: any) {
+      const msg = err?.message || "Transcription failed";
+      setTranscribeError(msg);
+      toast.error(msg);
+      return null;
+    } finally {
+      setIsTranscribing(false);
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
       releaseWakeLock();
@@ -641,7 +745,16 @@ const Record = () => {
     };
   }, [releaseWakeLock, cleanup]);
 
-  const processAudio = async (audioBlob: Blob, audioTranscript?: string) => {
+  const processAudio = async (
+    audioBlob: Blob,
+    audioTranscript?: string,
+    opts?: {
+      // When present, skip the client upload — audio is already stored at this path.
+      existingAudioPath?: string;
+      // When "medical" or "client", the server should trust `audioTranscript` and not re-transcribe.
+      transcriptSource?: "medical" | "client";
+    }
+  ) => {
     setProcessing(true);
 
     // Always send the on-screen transcript to the server as a fallback. The server decides
@@ -675,7 +788,10 @@ const Record = () => {
       if (!user) throw new Error("Not authenticated");
 
       const ext = audioBlob.type.includes("webm") ? "webm" : "wav";
-      const fileName = `${user.id}/${Date.now()}.${ext}`;
+      const fileName = opts?.existingAudioPath
+        ? opts.existingAudioPath
+        : `${user.id}/${Date.now()}.${ext}`;
+      const skipUpload = !!opts?.existingAudioPath;
 
       // Create recording row first so we have an ID
       setProcessingStatus(
@@ -722,21 +838,28 @@ const Record = () => {
         )
         .subscribe();
 
-      // Kick off audio upload in background (non-blocking)
-      const uploadPromise = supabase.storage
-        .from("audio-recordings")
-        .upload(fileName, audioBlob)
-        .then(({ error }) => {
-          if (error) console.error("Background upload failed:", error);
-        });
+      // Kick off audio upload in background (non-blocking). Skipped when we're
+      // reusing an already-uploaded path (accurate dictation flow).
+      const uploadPromise = skipUpload
+        ? Promise.resolve()
+        : supabase.storage
+            .from("audio-recordings")
+            .upload(fileName, audioBlob)
+            .then(({ error }) => {
+              if (error) console.error("Background upload failed:", error);
+            });
 
       // We need to await the audio upload when the server is expected to transcribe it:
-      // - Dictation mode (server always re-transcribes for accuracy)
+      // - Dictation mode (server always re-transcribes for accuracy), unless the
+      //   client already ran medical ASR and marked the transcript as final.
       // - Consultation with no live transcript (uploaded files, or full-disconnect)
+      const clientTranscriptFinal =
+        opts?.transcriptSource === "medical" || opts?.transcriptSource === "client";
       const willServerTranscribe =
-        modeRef.current === "dictation" || !fallbackTranscript;
+        !clientTranscriptFinal &&
+        (modeRef.current === "dictation" || !fallbackTranscript);
 
-      if (willServerTranscribe) {
+      if (willServerTranscribe && !skipUpload) {
         setProcessingStatus("Uploading audio...");
         await uploadPromise;
       }
@@ -753,6 +876,7 @@ const Record = () => {
             // Always send the on-screen transcript — server uses it for consultation, and as a
             // fallback for dictation if server-side transcription fails.
             transcript: fallbackTranscript || undefined,
+            transcript_source: opts?.transcriptSource,
             mode: modeRef.current,
             patient_name: patientName || undefined,
             patient_id: patientId || undefined,
@@ -829,21 +953,37 @@ const Record = () => {
   };
 
   // Move from record stage to review stage (where user can edit transcript)
-  const goToReview = () => {
-    const finalTranscript = transcriptRef.current;
-    if (!finalTranscript && chunksRef.current.length === 0) {
+  const goToReview = async () => {
+    if (chunksRef.current.length === 0 && !transcriptRef.current) {
       toast.error("No recording available");
       return;
     }
-    setEditableTranscript(finalTranscript);
+    // For accurate dictation, transcribe the finished audio with MedASR first
+    // so the review screen shows the same transcript that will drive letter
+    // generation — no Deepgram-vs-MedASR mismatch.
+    if (useMedicalDictation && !transcriptRef.current) {
+      const result = await transcribeFinishedAudioForMedical();
+      if (!result) return; // toast already shown
+      setStage("review");
+      return;
+    }
+    setEditableTranscript(transcriptRef.current);
     setStage("review");
   };
 
   // Actually generate letter from review stage
   const handleGenerateFromReview = async () => {
     const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-    // For dictation mode, server will re-transcribe with MedASR regardless; we still send the edited
-    // transcript as a fallback. For consultation, we use the edited transcript directly.
+    // For accurate dictation: transcript already came from MedASR (or the user's
+    // edits of it) — tell the server to trust it as-is so it doesn't re-run ASR.
+    if (useMedicalDictation) {
+      await processAudio(blob, editableTranscript || undefined, {
+        existingAudioPath: medicalUploadPathRef.current || undefined,
+        transcriptSource: "medical",
+      });
+      return;
+    }
+    // For consultation/fast dictation, keep the existing behaviour.
     await processAudio(blob, editableTranscript || undefined);
   };
 
@@ -962,6 +1102,8 @@ const Record = () => {
     transcriptRef.current = "";
     setEditableTranscript("");
     setStage("record");
+    medicalUploadPathRef.current = null;
+    setTranscribeError(null);
   };
 
   const formatTime = (s: number) =>
@@ -982,15 +1124,31 @@ const Record = () => {
     }
     if (autoProcessFiredRef.current) return;
     if (processing) return;
+    if (isTranscribing) return;
     if (modeRef.current !== "dictation") return;
     if (!skipDictationReview) return;
     if (chunksRef.current.length === 0) return;
 
     autoProcessFiredRef.current = true;
-    const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-    processAudio(blob, transcriptRef.current || undefined);
+    (async () => {
+      const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+      if (useMedicalDictation) {
+        // First run MedASR so the letter is generated from the accurate transcript.
+        const result = await transcribeFinishedAudioForMedical();
+        if (!result) {
+          autoProcessFiredRef.current = false; // let the user retry via the button
+          return;
+        }
+        await processAudio(blob, result.text, {
+          existingAudioPath: result.audio_path,
+          transcriptSource: "medical",
+        });
+      } else {
+        await processAudio(blob, transcriptRef.current || undefined);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasStopped, skipDictationReview]);
+  }, [hasStopped, skipDictationReview, isTranscribing, useMedicalDictation]);
 
   const connectionMeta = {
     good: {
@@ -1205,6 +1363,8 @@ const Record = () => {
                 >
                   {processing
                     ? "● Processing"
+                    : isTranscribing
+                    ? "● Transcribing"
                     : isStarting
                     ? "● Connecting..."
                     : isPaused
@@ -1311,9 +1471,22 @@ const Record = () => {
 
                 {hasStopped && !processing && (
                   <div className="w-full space-y-3 pt-2">
-                    <Button onClick={goToReview} className="w-full gap-2 h-11">
-                      Review Transcript
-                      <ChevronRight className="h-4 w-4" />
+                    <Button
+                      onClick={goToReview}
+                      disabled={isTranscribing}
+                      className="w-full gap-2 h-11"
+                    >
+                      {isTranscribing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Transcribing…
+                        </>
+                      ) : (
+                        <>
+                          Review Transcript
+                          <ChevronRight className="h-4 w-4" />
+                        </>
+                      )}
                     </Button>
                     {/* Discard separated visually so accidental clicks are unlikely.
                         Auto-saves as a draft before clearing — see handleDiscard. */}
@@ -1361,15 +1534,30 @@ const Record = () => {
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)] flex flex-col min-h-[640px]">
               <div className="px-6 py-4 border-b border-border/60 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Live Transcript
+                  {useMedicalDictation ? "Transcript" : "Live Transcript"}
                 </h3>
-                {isRecording && !isPaused && streamHealth === "connected" && (
+                {isRecording && !isPaused && streamHealth === "connected" && !useMedicalDictation && (
                   <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                     </span>
                     Listening
+                  </span>
+                )}
+                {isRecording && useMedicalDictation && (
+                  <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                    </span>
+                    Recording
+                  </span>
+                )}
+                {isTranscribing && (
+                  <span className="flex items-center gap-1.5 text-xs text-primary">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Transcribing with medical engine...
                   </span>
                 )}
                 {isRecording && streamHealth === "reconnecting" && (
@@ -1392,6 +1580,21 @@ const Record = () => {
               </div>
 
               <div className="flex-1 overflow-y-auto p-5 flex flex-col">
+                {useMedicalDictation && !transcript && (
+                  <div className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-xs leading-relaxed text-slate-700 dark:text-slate-300">
+                    <div className="flex items-start gap-2">
+                      <Stethoscope className="h-3.5 w-3.5 mt-0.5 text-primary flex-shrink-0" />
+                      <div>
+                        <div className="font-medium text-slate-900 dark:text-slate-100 mb-0.5">
+                          Accurate dictation module
+                        </div>
+                        You are using the accurate dictation module. Because of the
+                        enhanced transcription process, there may be a short delay
+                        after you press Stop before the transcript becomes available.
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <Textarea
                   value={transcript}
                   onChange={(e) => {
@@ -1399,7 +1602,13 @@ const Record = () => {
                     transcriptRef.current = e.target.value;
                   }}
                   placeholder={
-                    isRecording
+                    useMedicalDictation
+                      ? isRecording
+                        ? "Recording… transcript will appear here after you press Stop."
+                        : isTranscribing
+                        ? "Transcribing with the medical engine…"
+                        : "Your transcript will appear here after recording."
+                      : isRecording
                       ? "Waiting for speech..."
                       : "Transcript will appear here as you speak. You can edit at any time — even while recording."
                   }
