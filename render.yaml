@@ -1,0 +1,29 @@
+# Render Blueprint — belt-and-braces SPA config.
+#
+# The `_redirects` file in public/ handles SPA routing on Render Static Sites
+# that were created from the dashboard. This Blueprint definition covers the
+# case where the service was created as something else (Web Service / Docker),
+# or where the dashboard-configured rewrite rules were removed.
+#
+# If the existing Render service was created manually in the dashboard, this
+# file has NO effect on it — Render only reads render.yaml on the initial
+# Blueprint deploy. In that case, set the rewrite in the dashboard:
+#   Static Site → Redirects/Rewrites → Add rule:
+#     Source path:      /*
+#     Destination path: /index.html
+#     Action:           Rewrite
+#     (NOT "Redirect" — that returns a 301 and breaks React Router.)
+
+services:
+  - type: web
+    name: notemd
+    env: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: 20
