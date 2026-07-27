@@ -268,8 +268,9 @@ const Settings = () => {
 
       <Tabs defaultValue="profile" className="space-y-6">
         {/* On mobile the tab bar scrolls horizontally instead of wrapping so
-            all four tabs stay reachable one-handed. */}
-        <TabsList className="w-full max-w-full overflow-x-auto flex-nowrap justify-start sm:w-auto sm:inline-flex sm:justify-center">
+            all four tabs stay reachable one-handed. Desktop keeps the default
+            inline-flex layout with no scroll gutter. */}
+        <TabsList className="max-sm:w-full max-sm:max-w-full max-sm:overflow-x-auto max-sm:flex-nowrap max-sm:justify-start">
           <TabsTrigger value="profile" className="gap-2">
             <User className="h-4 w-4" />
             Profile
