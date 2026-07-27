@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -126,6 +126,29 @@ const Record = () => {
   const skipDictationReview = userPref?.skip_dictation_review ?? false;
   const dictationEngine = userPref?.dictation_engine ?? "accurate";
 
+  // Persist the dictation engine right from the Record page — the previous UX
+  // forced users to jump into Settings to change it. The mutation invalidates
+  // the same "user-record-pref" query so the local `dictationEngine` value
+  // reflects the change immediately.
+  const queryClient = useQueryClient();
+  const dictationEngineMutation = useMutation({
+    mutationFn: async (engine: "fast" | "accurate") => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+      const { error } = await supabase
+        .from("profiles")
+        .update({ dictation_engine: engine } as any)
+        .eq("user_id", user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["user-record-pref"] });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Couldn't save dictation preference");
+    },
+  });
+
   // When the user has picked the accurate medical engine for dictation, we skip
   // the live streaming provider entirely and transcribe the finished audio with
   // MedASR after Stop. This gives ONE transcript (from the same engine that
@@ -193,6 +216,24 @@ const Record = () => {
   // re-transcribe the full audio with MedASR on stop to guarantee completeness.
   const hadDisconnectRef = useRef(false);
 
+  // localStorage session recovery. The audio blob is too large to fit
+  // reliably in localStorage, but the transcript + patient meta are cheap.
+  // Saved every few seconds while recording so if the tab is closed, the
+  // user is offered to recover their in-progress transcript on next open.
+  const RECOVERY_KEY = "notemd.recording-recovery.v1";
+  type RecoverySnapshot = {
+    savedAt: number;
+    startedAt: number;
+    mode: RecordMode;
+    patient_name: string;
+    patient_id: string;
+    template_id: string | null;
+    transcript: string;
+    elapsed: number;
+  };
+  const recoverySaveThrottleRef = useRef<number>(0);
+  const [recovery, setRecovery] = useState<RecoverySnapshot | null>(null);
+
   // Keep modeRef in sync for use inside async callbacks
   useEffect(() => {
     modeRef.current = mode;
@@ -201,6 +242,80 @@ const Record = () => {
   useEffect(() => {
     useMedicalDictationRef.current = useMedicalDictation;
   }, [useMedicalDictation]);
+
+  // On mount, look for a leftover recovery snapshot from an accidentally-closed
+  // session (browser Back, tab closed, crash). Only surface it if it's from the
+  // last 24h — anything older is likely stale.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(RECOVERY_KEY);
+      if (!raw) return;
+      const snap = JSON.parse(raw) as RecoverySnapshot;
+      if (!snap?.transcript) return;
+      const ageMs = Date.now() - (snap.savedAt || 0);
+      if (ageMs > 24 * 60 * 60 * 1000) {
+        localStorage.removeItem(RECOVERY_KEY);
+        return;
+      }
+      setRecovery(snap);
+    } catch {
+      /* corrupt snapshot — ignore */
+    }
+  }, []);
+
+  // While recording, snapshot the transcript + patient meta every ~3s. Never
+  // stores the audio blob (too large for localStorage).
+  useEffect(() => {
+    if (!isRecording) return;
+    const iv = setInterval(() => {
+      const now = Date.now();
+      if (now - recoverySaveThrottleRef.current < 2500) return;
+      recoverySaveThrottleRef.current = now;
+      const snap: RecoverySnapshot = {
+        savedAt: now,
+        startedAt: recoverySaveThrottleRef.current || now,
+        mode,
+        patient_name: patientName,
+        patient_id: patientId,
+        template_id: selectedTemplateId,
+        transcript: transcriptRef.current || "",
+        elapsed,
+      };
+      try {
+        localStorage.setItem(RECOVERY_KEY, JSON.stringify(snap));
+      } catch {
+        /* quota / private mode — swallow */
+      }
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [isRecording, mode, patientName, patientId, selectedTemplateId, elapsed]);
+
+  // Clear the recovery snapshot once the session is finished in the normal way
+  // (letter generated, or explicitly discarded — see handleDiscard).
+  const clearRecovery = useCallback(() => {
+    try {
+      localStorage.removeItem(RECOVERY_KEY);
+    } catch {/* ignore */}
+    setRecovery(null);
+  }, []);
+
+  // Applies a recovered snapshot to the current form so the user can save it as
+  // a draft or generate a letter from the recovered transcript. Audio isn't
+  // available so we go straight to the review stage.
+  const restoreRecovery = useCallback((snap: RecoverySnapshot) => {
+    setMode(snap.mode);
+    setPatientName(snap.patient_name || "");
+    setPatientId(snap.patient_id || "");
+    setSelectedTemplateId(snap.template_id || null);
+    setEditableTranscript(snap.transcript || "");
+    setTranscript(snap.transcript || "");
+    transcriptRef.current = snap.transcript || "";
+    setElapsed(snap.elapsed || 0);
+    setHasRecording(false); // no audio blob to recover
+    setStage("review");
+    setRecovery(null);
+    toast.success("Recovered your in-progress transcript. Save as a draft or generate a letter.");
+  }, []);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -344,8 +459,11 @@ const Record = () => {
     };
   }, []);
 
-  const openWebSocket = useCallback(async (): Promise<WebSocket> => {
-    let key = deepgramKeyRef.current;
+  const openWebSocket = useCallback(async (opts?: { forceFreshToken?: boolean }): Promise<WebSocket> => {
+    // Deepgram short-lived tokens (default ~30s) can expire between the initial
+    // connection and any later reconnect. When reconnecting we always ask for a
+    // fresh one so a stale key doesn't silently fail the handshake.
+    let key = opts?.forceFreshToken ? null : deepgramKeyRef.current;
     if (!key) {
       const { data, error } = await supabase.functions.invoke("deepgram-token");
       if (error || !data?.key) throw new Error(error?.message || "Failed to get Deepgram token");
@@ -388,20 +506,67 @@ const Record = () => {
     });
   }, []);
 
-  const flushPendingChunks = useCallback((ws: WebSocket) => {
-    if (pendingChunksRef.current.length === 0) return;
-    console.log(`[Transcription] Flushing ${pendingChunksRef.current.length} buffered chunks`);
-    for (const chunk of pendingChunksRef.current) {
-      try {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(chunk);
-        }
-      } catch (e) {
-        console.error("[Transcription] Failed to send buffered chunk:", e);
-      }
-    }
+  // On reconnect we DELIBERATELY do not replay buffered chunks. They are
+  // mid-stream webm data captured after the recorder had already emitted its
+  // opening header, so Deepgram's decoder can't parse them in isolation — the
+  // socket would look healthy but the live transcript would never resume.
+  //
+  // Instead we restart the MediaRecorder (see restartMediaRecorderForReconnect)
+  // so a fresh webm stream, complete with its header, flows to the new socket.
+  // The audio for the final letter remains in chunksRef so nothing is lost.
+  const dropPendingChunks = useCallback(() => {
     pendingChunksRef.current = [];
     setBufferedSeconds(0);
+  }, []);
+
+  // Stop the current MediaRecorder and start a fresh one on the same MediaStream
+  // so the next data chunks begin with a fresh webm header. Called after a
+  // successful WebSocket reconnect to let Deepgram start decoding again.
+  const restartMediaRecorderForReconnect = useCallback(() => {
+    const current = mediaRecorderRef.current;
+    const stream = streamRef.current;
+    if (!stream) return;
+    // Save state that startRecording would reset — pause flag, elapsed time, etc.
+    const wasPaused = isPausedRef.current;
+    try {
+      if (current && current.state !== "inactive") {
+        // Detach handlers so the trailing ondataavailable / onstop from the old
+        // recorder don't interfere with the new one.
+        current.ondataavailable = null;
+        current.onstop = null;
+        current.stop();
+      }
+    } catch (e) {
+      console.warn("[Transcription] Old MediaRecorder stop failed:", e);
+    }
+
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+    const recorder = new MediaRecorder(stream, { mimeType });
+    mediaRecorderRef.current = recorder;
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size === 0) return;
+      chunksRef.current.push(e.data);
+      if (isPausedRef.current) return;
+      if (recorder.state !== "recording") return;
+      const currentWs = wsRef.current;
+      if (currentWs && currentWs.readyState === WebSocket.OPEN) {
+        try {
+          currentWs.send(e.data);
+        } catch (err) {
+          console.error("[Transcription] Send failed post-reconnect:", err);
+        }
+      }
+    };
+    recorder.onstop = () => {
+      setHasRecording(chunksRef.current.length > 0);
+    };
+    recorder.start(250);
+
+    // Restore paused state if the user was paused when reconnect fired.
+    isPausedRef.current = wasPaused;
   }, []);
 
   const scheduleReconnect = useCallback(() => {
@@ -420,12 +585,15 @@ const Record = () => {
       reconnectAttemptRef.current += 1;
 
       try {
-        const ws = await openWebSocket();
+        const ws = await openWebSocket({ forceFreshToken: true });
         wsRef.current = ws;
         attachWebSocketHandlers(ws);
 
-        // Replay buffered chunks
-        flushPendingChunks(ws);
+        // Discard any mid-stream chunks captured while offline — they can't be
+        // decoded standalone. Then restart the MediaRecorder so the new socket
+        // gets a fresh webm stream (with header) it can actually parse.
+        dropPendingChunks();
+        restartMediaRecorderForReconnect();
 
         reconnectAttemptRef.current = 0;
         setStreamHealth("connected");
@@ -441,7 +609,7 @@ const Record = () => {
         }
       }
     }, delay);
-  }, [openWebSocket, attachWebSocketHandlers, flushPendingChunks]);
+  }, [openWebSocket, attachWebSocketHandlers, dropPendingChunks, restartMediaRecorderForReconnect]);
 
   // Keep ref in sync so window event listeners can call latest scheduleReconnect
   useEffect(() => {
@@ -780,6 +948,8 @@ const Record = () => {
         supabase.removeChannel(realtimeChannel);
         realtimeChannel = null;
       }
+      // Session finished normally — no need to offer recovery next time.
+      clearRecovery();
       navigate(`/letter/${letterId}`);
     };
 
@@ -1104,6 +1274,7 @@ const Record = () => {
     setStage("record");
     medicalUploadPathRef.current = null;
     setTranscribeError(null);
+    clearRecovery();
   };
 
   const formatTime = (s: number) =>
@@ -1177,6 +1348,38 @@ const Record = () => {
     <div className="">
       <div>
         <div className="space-y-4">
+          {/* Recovery banner: a leftover in-progress transcript from an accidentally
+              closed session, offered on next open. */}
+          {recovery && stage === "record" && !isRecording && !hasRecording && (
+            <div className="rounded-2xl border border-primary/40 bg-primary/5 p-4 flex items-start justify-between gap-4 flex-wrap">
+              <div className="flex items-start gap-3 min-w-0 flex-1">
+                <div className="w-9 h-9 rounded-lg bg-primary/15 text-primary flex items-center justify-center flex-shrink-0">
+                  <RotateCcw className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-medium text-sm text-slate-900 dark:text-slate-100">
+                    Recover your in-progress transcript?
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {(recovery.transcript || "").split(/\s+/).filter(Boolean).length} words captured
+                    {recovery.patient_name ? ` · ${recovery.patient_name}` : ""}
+                    {" · saved "}
+                    {Math.max(1, Math.round((Date.now() - recovery.savedAt) / 60000))}m ago.
+                    Audio isn't recovered — just the transcript.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={() => restoreRecovery(recovery)} className="gap-1.5">
+                  Recover
+                </Button>
+                <Button size="sm" variant="ghost" onClick={clearRecovery}>
+                  Discard
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Top bar: mode toggle + connection status */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
@@ -1211,6 +1414,51 @@ const Record = () => {
               {connectionMeta.label}
             </div>
           </div>
+
+          {/* Dictation engine picker — only visible when dictation mode is selected.
+              Duplicates the Settings control so clinicians can flip engines in one place. */}
+          {mode === "dictation" && stage === "record" && (
+            <div className="rounded-2xl border border-border/60 bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(21,33,52,0.04)] p-3 sm:p-4">
+              <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Dictation transcription engine</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Choose the engine for this session. Saved to your profile.</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => canToggleMode && dictationEngineMutation.mutate("fast")}
+                  disabled={!canToggleMode || dictationEngineMutation.isPending}
+                  className={`text-left rounded-lg border p-3 transition-colors ${
+                    dictationEngine === "fast"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-border/80"
+                  } ${!canToggleMode ? "opacity-60 cursor-not-allowed" : ""}`}
+                >
+                  <p className="font-medium text-sm text-slate-900 dark:text-slate-100">Fast (live)</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Near real-time transcript. Best for speed.
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => canToggleMode && dictationEngineMutation.mutate("accurate")}
+                  disabled={!canToggleMode || dictationEngineMutation.isPending}
+                  className={`text-left rounded-lg border p-3 transition-colors ${
+                    dictationEngine === "accurate"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-border/80"
+                  } ${!canToggleMode ? "opacity-60 cursor-not-allowed" : ""}`}
+                >
+                  <p className="font-medium text-sm text-slate-900 dark:text-slate-100">Accurate (medical)</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Medical-domain model. Best for clinical terminology. Short delay after Stop.
+                  </p>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Patient info + template */}
           {stage === "record" && (

@@ -168,7 +168,14 @@ const LetterView = () => {
         body: {
           letter_id: letter.id,
           instructions: finalInstructions,
-          template_id: templateChanged ? regenTemplateId : undefined,
+          // "none" means the user chose to bypass any template — the server treats it as no
+          // template guidance and ignores the letter's currently-attached template.
+          template_id:
+            regenTemplateId === "none"
+              ? "none"
+              : templateChanged
+              ? regenTemplateId
+              : undefined,
           // Use faster model for quick prompts (small refinements). Custom instructions and template
           // switches use the full model for higher quality.
           fast: fast === true,
@@ -342,6 +349,7 @@ const LetterView = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="keep">Keep current template</SelectItem>
+                  <SelectItem value="none">No template — follow my instructions only</SelectItem>
                   <SelectGroup>
                     <SelectLabel>My Templates</SelectLabel>
                     {templates
@@ -383,7 +391,12 @@ const LetterView = () => {
 
             <Button
               onClick={() => handleRegenerate()}
-              disabled={regenerating || (!instructions.trim() && regenTemplateId === "keep")}
+              disabled={
+                regenerating ||
+                (!instructions.trim() &&
+                  regenTemplateId !== "none" &&
+                  regenTemplateId === "keep")
+              }
               className="gap-2 w-full sm:w-auto"
             >
               {regenerating ? (

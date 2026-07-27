@@ -267,7 +267,9 @@ const Settings = () => {
       </div>
 
       <Tabs defaultValue="profile" className="space-y-6">
-        <TabsList>
+        {/* On mobile the tab bar scrolls horizontally instead of wrapping so
+            all four tabs stay reachable one-handed. */}
+        <TabsList className="w-full max-w-full overflow-x-auto flex-nowrap justify-start sm:w-auto sm:inline-flex sm:justify-center">
           <TabsTrigger value="profile" className="gap-2">
             <User className="h-4 w-4" />
             Profile

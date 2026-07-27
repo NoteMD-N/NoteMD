@@ -144,79 +144,138 @@ const Letters = () => {
               </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Patient</TableHead>
-                  <TableHead>Patient ID / NHS No.</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Preview</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((letter) => {
-                  return (
-                    <TableRow key={letter.id}>
-                      <TableCell>
-                        {letter.patient_name ? (
-                          <span className="font-medium">{letter.patient_name}</span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">Not set</span>
+            <>
+              {/* Mobile: stacked cards. */}
+              <ul className="sm:hidden divide-y divide-border/60">
+                {filtered.map((letter) => (
+                  <li key={letter.id} className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <button
+                        onClick={() => navigate(`/letter/${letter.id}`)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium text-sm text-foreground truncate">
+                            {letter.patient_name || <span className="italic text-muted-foreground">No patient name</span>}
+                          </p>
+                          <Badge variant="secondary" className={statusColors[letter.status] || ""}>
+                            {letter.status}
+                          </Badge>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
+                          {letter.patient_id && <div className="font-mono">{letter.patient_id}</div>}
+                          <div>{format(new Date(letter.created_at), "dd MMM yyyy, HH:mm")}</div>
+                        </div>
+                        {letter.letter_content && (
+                          <p className="mt-2 text-xs text-muted-foreground line-clamp-2">
+                            {letter.letter_content.slice(0, 140)}
+                          </p>
                         )}
-                      </TableCell>
-                      <TableCell>
-                        {letter.patient_id ? (
-                          <span className="font-mono text-xs">{letter.patient_id}</span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">Not set</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {format(new Date(letter.created_at), "dd MMM yyyy, HH:mm")}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className={statusColors[letter.status] || ""}>
-                          {letter.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell max-w-[240px]">
-                        <p className="text-xs text-muted-foreground truncate">
-                          {letter.letter_content?.slice(0, 80) || "--"}
-                        </p>
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => navigate(`/letter/${letter.id}`)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              View
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleCopy(letter.letter_content)}>
-                              <Copy className="mr-2 h-4 w-4" />
-                              Copy
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => deleteMutation.mutate(letter.id)}
-                              className="text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+                      </button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => navigate(`/letter/${letter.id}`)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            View
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleCopy(letter.letter_content)}>
+                            <Copy className="mr-2 h-4 w-4" />
+                            Copy
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => deleteMutation.mutate(letter.id)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+
+              {/* Desktop: table wrapped in overflow scroller. */}
+              <div className="hidden sm:block overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Patient</TableHead>
+                      <TableHead className="hidden md:table-cell">Patient ID / NHS No.</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="hidden lg:table-cell">Preview</TableHead>
+                      <TableHead className="w-12"></TableHead>
                     </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((letter) => (
+                      <TableRow key={letter.id}>
+                        <TableCell>
+                          {letter.patient_name ? (
+                            <span className="font-medium">{letter.patient_name}</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground italic">Not set</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          {letter.patient_id ? (
+                            <span className="font-mono text-xs">{letter.patient_id}</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground italic">Not set</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {format(new Date(letter.created_at), "dd MMM yyyy, HH:mm")}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className={statusColors[letter.status] || ""}>
+                            {letter.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell max-w-[240px]">
+                          <p className="text-xs text-muted-foreground truncate">
+                            {letter.letter_content?.slice(0, 80) || "--"}
+                          </p>
+                        </TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => navigate(`/letter/${letter.id}`)}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                View
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleCopy(letter.letter_content)}>
+                                <Copy className="mr-2 h-4 w-4" />
+                                Copy
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => deleteMutation.mutate(letter.id)}
+                                className="text-destructive focus:text-destructive"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

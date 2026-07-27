@@ -197,88 +197,78 @@ const Recordings = () => {
               )}
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Patient</TableHead>
-                  <TableHead>Patient ID / NHS No.</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Letter</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Mobile: stacked card list. Below sm we show one card per recording
+                  so nothing gets clipped or requires horizontal scrolling. */}
+              <ul className="sm:hidden divide-y divide-border/60">
                 {filtered.map((rec) => {
                   const linkedLetters = rec.letters as any[];
                   const letter = linkedLetters?.[0];
                   return (
-                    <TableRow key={rec.id}>
-                      <TableCell>
-                        {rec.patient_name ? (
-                          <span className="font-medium">{rec.patient_name}</span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">Not set</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {rec.patient_id ? (
-                          <span className="font-mono text-xs">{rec.patient_id}</span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">Not set</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {format(new Date(rec.created_at), "dd MMM yyyy, HH:mm")}
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">
-                        {formatDuration(rec.duration_seconds)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className={statusColors[rec.status] || ""}>
-                          {rec.status.replace("_", " ")}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {letter ? (
-                          <Button
-                            variant="link"
-                            size="sm"
-                            className="h-auto p-0 text-xs font-mono"
-                            onClick={() => navigate(`/letter/${letter.id}`)}
-                          >
-                            View
-                          </Button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">--</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
+                    <li key={rec.id} className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-medium text-sm text-foreground truncate">
+                              {rec.patient_name || <span className="italic text-muted-foreground">No patient name</span>}
+                            </p>
+                            <Badge variant="secondary" className={statusColors[rec.status] || ""}>
+                              {rec.status.replace("_", " ")}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
+                            {rec.patient_id && (
+                              <div className="font-mono">{rec.patient_id}</div>
+                            )}
+                            <div>
+                              {format(new Date(rec.created_at), "dd MMM yyyy, HH:mm")} · {formatDuration(rec.duration_seconds)}
+                            </div>
+                          </div>
+                          <div className="mt-2 flex items-center gap-2 flex-wrap">
+                            {letter ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 text-xs gap-1.5"
+                                onClick={() => navigate(`/letter/${letter.id}`)}
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                View letter
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 text-xs gap-1.5"
+                                disabled={generatingId === rec.id || !rec.audio_path}
+                                onClick={() => handleGenerateForRecording(rec, null)}
+                              >
+                                {generatingId === rec.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Sparkles className="h-3.5 w-3.5" />
+                                )}
+                                Generate letter
+                              </Button>
+                            )}
+                          </div>
+                        </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0">
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             {letter && (
-                              <DropdownMenuItem onClick={() => navigate(`/letter/${letter.id}`)}>
-                                <FileText className="mr-2 h-4 w-4" />
-                                View Letter
+                              <DropdownMenuItem
+                                disabled={generatingId === rec.id}
+                                onClick={() => handleGenerateForRecording(rec, letter.id)}
+                              >
+                                <Sparkles className="mr-2 h-4 w-4" />
+                                Regenerate Letter
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem
-                              disabled={generatingId === rec.id || !rec.audio_path}
-                              onClick={() => handleGenerateForRecording(rec, letter?.id ?? null)}
-                            >
-                              {generatingId === rec.id ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              ) : (
-                                <Sparkles className="mr-2 h-4 w-4" />
-                              )}
-                              {letter ? "Regenerate Letter" : "Generate Letter"}
-                            </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => deleteMutation.mutate(rec.id)}
                               className="text-destructive focus:text-destructive"
@@ -288,12 +278,114 @@ const Recordings = () => {
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
+                      </div>
+                    </li>
                   );
                 })}
-              </TableBody>
-            </Table>
+              </ul>
+
+              {/* Desktop: full table, wrapped in an overflow scroller so ultra-narrow
+                  widths degrade gracefully instead of horizontally overflowing the page. */}
+              <div className="hidden sm:block overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Patient</TableHead>
+                      <TableHead className="hidden md:table-cell">Patient ID / NHS No.</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="hidden lg:table-cell">Duration</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Letter</TableHead>
+                      <TableHead className="w-12"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((rec) => {
+                      const linkedLetters = rec.letters as any[];
+                      const letter = linkedLetters?.[0];
+                      return (
+                        <TableRow key={rec.id}>
+                          <TableCell>
+                            {rec.patient_name ? (
+                              <span className="font-medium">{rec.patient_name}</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground italic">Not set</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell">
+                            {rec.patient_id ? (
+                              <span className="font-mono text-xs">{rec.patient_id}</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground italic">Not set</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {format(new Date(rec.created_at), "dd MMM yyyy, HH:mm")}
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell font-mono text-sm">
+                            {formatDuration(rec.duration_seconds)}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className={statusColors[rec.status] || ""}>
+                              {rec.status.replace("_", " ")}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {letter ? (
+                              <Button
+                                variant="link"
+                                size="sm"
+                                className="h-auto p-0 text-xs font-mono"
+                                onClick={() => navigate(`/letter/${letter.id}`)}
+                              >
+                                View
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">--</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {letter && (
+                                  <DropdownMenuItem onClick={() => navigate(`/letter/${letter.id}`)}>
+                                    <FileText className="mr-2 h-4 w-4" />
+                                    View Letter
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuItem
+                                  disabled={generatingId === rec.id || !rec.audio_path}
+                                  onClick={() => handleGenerateForRecording(rec, letter?.id ?? null)}
+                                >
+                                  {generatingId === rec.id ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Sparkles className="mr-2 h-4 w-4" />
+                                  )}
+                                  {letter ? "Regenerate Letter" : "Generate Letter"}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => deleteMutation.mutate(rec.id)}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

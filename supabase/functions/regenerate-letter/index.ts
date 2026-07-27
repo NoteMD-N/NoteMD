@@ -42,6 +42,11 @@ serve(async (req) => {
     if (!letter_id || !instructions) {
       throw new Error("letter_id and instructions are required");
     }
+    // The client sends the string "none" when the user picks "No template —
+    // follow my instructions only". Distinguish it from `undefined` (keep the
+    // letter's current template) and from a real UUID (switch templates).
+    const noTemplate = template_id === "none";
+    const effectiveTemplateId = noTemplate ? null : (template_id as string | undefined);
 
     // Load the existing letter (RLS ensures user can only load their own)
     const { data: letter, error: letterErr } = await supabase
@@ -122,19 +127,32 @@ Use British English.
 Do not write in bold.
 Return only the revised letter — no preamble, no commentary, no "Revised Letter:" heading.`;
 
+    // Only apply template guidance when the client explicitly asked for a template switch.
+    // "No template" bypasses everything and tells the AI to ignore the draft's existing
+    // structure — it should work purely from the transcript + user instructions.
     let templateGuidance = "";
-    if (template_id) {
+    if (!noTemplate && effectiveTemplateId) {
       const { data: tmpl } = await supabase
         .from("templates")
         .select("prompt, name")
-        .eq("id", template_id)
+        .eq("id", effectiveTemplateId)
         .single();
       if (tmpl?.prompt) {
         templateGuidance = `\n\nADDITIONAL STRUCTURAL GUIDANCE — reformat the letter to follow this template's structure and conventions (draw all clinical detail from the transcript):\n\n${tmpl.prompt}`;
       }
     }
 
-    const systemPrompt = SAFETY_CLAUSE + REFINEMENT_BASE + templateGuidance;
+    const NO_TEMPLATE_CLAUSE = noTemplate
+      ? `\n\nTEMPLATE OVERRIDE — NO TEMPLATE
+The clinician has explicitly opted out of any template. Do NOT preserve the current draft's
+section structure, headings, or ordering when they conflict with the clinician's instructions.
+Follow the clinician's instructions verbatim. If they ask for a plain paragraph, produce a plain
+paragraph. If they ask for a specific ordering, use that ordering. Draw clinical content only
+from the transcript (authoritative source) and the current draft (secondary). Return only the
+revised letter.`
+      : "";
+
+    const systemPrompt = SAFETY_CLAUSE + REFINEMENT_BASE + templateGuidance + NO_TEMPLATE_CLAUSE;
 
     const patientHeader = [
       letter.patient_name ? `Patient Name: ${letter.patient_name}` : null,
@@ -176,13 +194,14 @@ Return only the revised letter — no preamble, no commentary, no "Revised Lette
     const gptData = await gptResponse.json();
     const newContent = gptData.choices[0].message.content;
 
-    // Update the letter
+    // Update the letter. When the user picked "No template", detach the template from the letter
+    // so subsequent regenerations don't silently inherit it again.
     const { error: updateErr } = await supabase
       .from("letters")
       .update({
         letter_content: newContent,
         status: "draft",
-        template_id: template_id || letter.template_id,
+        template_id: noTemplate ? null : (effectiveTemplateId || letter.template_id),
       })
       .eq("id", letter_id);
 
