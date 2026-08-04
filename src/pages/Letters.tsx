@@ -31,6 +31,16 @@ import {
 import { FileText, Search, MoreHorizontal, Eye, Copy, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const statusColors: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",
@@ -44,6 +54,8 @@ const Letters = () => {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  // Confirm before delete — avoids accidental loss.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const { data: letters = [], isLoading } = useQuery({
     queryKey: ["letters-with-recordings"],
@@ -188,7 +200,13 @@ const Letters = () => {
                             Copy
                           </DropdownMenuItem>
                           <DropdownMenuItem
-                            onClick={() => deleteMutation.mutate(letter.id)}
+                            onClick={(e) => {
+                              // See Recordings.tsx — defer to next frame so the Radix
+                              // menu closes before we open the AlertDialog.
+                              e.preventDefault();
+                              const id = letter.id;
+                              requestAnimationFrame(() => setPendingDeleteId(id));
+                            }}
                             className="text-destructive focus:text-destructive"
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
@@ -261,7 +279,13 @@ const Letters = () => {
                                 Copy
                               </DropdownMenuItem>
                               <DropdownMenuItem
-                                onClick={() => deleteMutation.mutate(letter.id)}
+                                onClick={(e) => {
+                              // See Recordings.tsx — defer to next frame so the Radix
+                              // menu closes before we open the AlertDialog.
+                              e.preventDefault();
+                              const id = letter.id;
+                              requestAnimationFrame(() => setPendingDeleteId(id));
+                            }}
                                 className="text-destructive focus:text-destructive"
                               >
                                 <Trash2 className="mr-2 h-4 w-4" />
@@ -279,6 +303,33 @@ const Letters = () => {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => !open && setPendingDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this letter?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes the letter. The recording it was generated from
+              stays in Recordings. You can't undo this.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (pendingDeleteId) deleteMutation.mutate(pendingDeleteId);
+                setPendingDeleteId(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

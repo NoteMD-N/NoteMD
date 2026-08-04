@@ -24,6 +24,17 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import {
   Mic,
@@ -233,6 +244,13 @@ const Record = () => {
   };
   const recoverySaveThrottleRef = useRef<number>(0);
   const [recovery, setRecovery] = useState<RecoverySnapshot | null>(null);
+  // Server-side autosave state: once we create a draft row on Supabase we
+  // remember its id so subsequent autosaves update the same row, and normal
+  // finish (letter generated) or explicit Discard can consume/replace it.
+  const autoDraftRecordingIdRef = useRef<string | null>(null);
+  const autoDraftLetterIdRef = useRef<string | null>(null);
+  const autoDraftSaveThrottleRef = useRef<number>(0);
+  const autoDraftInFlightRef = useRef(false);
 
   // Keep modeRef in sync for use inside async callbacks
   useEffect(() => {
@@ -286,9 +304,106 @@ const Record = () => {
       } catch {
         /* quota / private mode — swallow */
       }
+      // Also mirror to Supabase every ~60s so the interrupted session shows up
+      // in the Recordings list directly — Mohamed reported that recovery via
+      // localStorage-only was invisible outside the Record page.
+      if (transcriptRef.current && now - autoDraftSaveThrottleRef.current >= 60_000) {
+        autoDraftSaveThrottleRef.current = now;
+        void autosaveDraftToServer();
+      }
     }, 3000);
     return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording, mode, patientName, patientId, selectedTemplateId, elapsed]);
+
+  // Autosave the in-progress transcript as a draft recording+letter on Supabase.
+  // Idempotent: the first successful call creates the rows; subsequent calls
+  // update them. Audio isn't uploaded until Discard (with audio) or a normal
+  // finish (which uploads and consumes the draft).
+  const autosaveDraftToServer = useCallback(async () => {
+    if (autoDraftInFlightRef.current) return;
+    const transcriptToSave = (transcriptRef.current || "").trim();
+    if (!transcriptToSave) return;
+    autoDraftInFlightRef.current = true;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      if (!autoDraftRecordingIdRef.current) {
+        const { data: rec, error: recErr } = await supabase
+          .from("recordings")
+          .insert({
+            user_id: user.id,
+            audio_path: "",
+            status: "draft",
+            duration_seconds: elapsed,
+            patient_name: patientName || null,
+            patient_id: patientId || null,
+            mode: modeRef.current,
+            template_id: selectedTemplateId,
+          })
+          .select()
+          .single();
+        if (recErr || !rec) return;
+        autoDraftRecordingIdRef.current = rec.id;
+
+        const { data: letterRow, error: letterErr } = await supabase
+          .from("letters")
+          .insert({
+            recording_id: rec.id,
+            user_id: user.id,
+            transcript: transcriptToSave,
+            letter_content: null,
+            status: "draft",
+            patient_name: patientName || null,
+            patient_id: patientId || null,
+            template_id: selectedTemplateId || null,
+          })
+          .select()
+          .single();
+        if (!letterErr && letterRow) autoDraftLetterIdRef.current = letterRow.id;
+      } else {
+        await supabase
+          .from("recordings")
+          .update({
+            duration_seconds: elapsed,
+            patient_name: patientName || null,
+            patient_id: patientId || null,
+            mode: modeRef.current,
+            template_id: selectedTemplateId,
+          })
+          .eq("id", autoDraftRecordingIdRef.current);
+
+        if (autoDraftLetterIdRef.current) {
+          await supabase
+            .from("letters")
+            .update({
+              transcript: transcriptToSave,
+              patient_name: patientName || null,
+              patient_id: patientId || null,
+              template_id: selectedTemplateId || null,
+            })
+            .eq("id", autoDraftLetterIdRef.current);
+        }
+      }
+    } catch (e) {
+      console.warn("[record] autosaveDraftToServer failed:", e);
+    } finally {
+      autoDraftInFlightRef.current = false;
+    }
+  }, [elapsed, patientName, patientId, selectedTemplateId]);
+
+  // On explicit Discard or successful letter generation the auto-draft is
+  // either consumed (Discard adds the audio to it) or removed (letter created).
+  const deleteAutoDraft = useCallback(async () => {
+    const recId = autoDraftRecordingIdRef.current;
+    if (!recId) return;
+    autoDraftRecordingIdRef.current = null;
+    autoDraftLetterIdRef.current = null;
+    try {
+      await supabase.from("recordings").delete().eq("id", recId);
+    } catch {/* ignore */}
+  }, []);
 
   // Clear the recovery snapshot once the session is finished in the normal way
   // (letter generated, or explicitly discarded — see handleDiscard).
@@ -948,8 +1063,11 @@ const Record = () => {
         supabase.removeChannel(realtimeChannel);
         realtimeChannel = null;
       }
-      // Session finished normally — no need to offer recovery next time.
+      // Session finished normally — no need to offer recovery next time, and
+      // the transcript-only auto-draft can be removed since we now have a real
+      // recording + letter pair to replace it.
       clearRecovery();
+      void deleteAutoDraft();
       navigate(`/letter/${letterId}`);
     };
 
@@ -1218,6 +1336,8 @@ const Record = () => {
       : null;
 
     // If there's anything worth saving, persist it as a draft before clearing.
+    // If an auto-draft was already created during recording we UPDATE it in
+    // place (adding the audio) instead of writing a second row.
     if (transcriptToSave || audioBlob) {
       setDiscarding(true);
       try {
@@ -1228,31 +1348,61 @@ const Record = () => {
             audioPath = `${user.id}/${Date.now()}-draft.webm`;
             await supabase.storage.from("audio-recordings").upload(audioPath, audioBlob);
           }
-          const { data: recording } = await supabase
-            .from("recordings")
-            .insert({
-              user_id: user.id,
-              audio_path: audioPath ?? "",
-              status: "draft",
-              duration_seconds: elapsed,
-              patient_name: patientName || null,
-              patient_id: patientId || null,
-              mode: modeRef.current,
-              template_id: selectedTemplateId,
-            })
-            .select()
-            .single();
-          if (recording && transcriptToSave) {
-            await supabase.from("letters").insert({
-              recording_id: recording.id,
-              user_id: user.id,
-              transcript: transcriptToSave,
-              letter_content: null,
-              status: "draft",
-              patient_name: patientName || null,
-              patient_id: patientId || null,
-              template_id: selectedTemplateId || null,
-            });
+
+          const existingRecId = autoDraftRecordingIdRef.current;
+          if (existingRecId) {
+            // Update the auto-draft with the final duration, meta and audio.
+            await supabase
+              .from("recordings")
+              .update({
+                audio_path: audioPath ?? "",
+                duration_seconds: elapsed,
+                patient_name: patientName || null,
+                patient_id: patientId || null,
+                mode: modeRef.current,
+                template_id: selectedTemplateId,
+              })
+              .eq("id", existingRecId);
+            if (autoDraftLetterIdRef.current && transcriptToSave) {
+              await supabase
+                .from("letters")
+                .update({
+                  transcript: transcriptToSave,
+                  patient_name: patientName || null,
+                  patient_id: patientId || null,
+                  template_id: selectedTemplateId || null,
+                })
+                .eq("id", autoDraftLetterIdRef.current);
+            }
+            autoDraftRecordingIdRef.current = null;
+            autoDraftLetterIdRef.current = null;
+          } else {
+            const { data: recording } = await supabase
+              .from("recordings")
+              .insert({
+                user_id: user.id,
+                audio_path: audioPath ?? "",
+                status: "draft",
+                duration_seconds: elapsed,
+                patient_name: patientName || null,
+                patient_id: patientId || null,
+                mode: modeRef.current,
+                template_id: selectedTemplateId,
+              })
+              .select()
+              .single();
+            if (recording && transcriptToSave) {
+              await supabase.from("letters").insert({
+                recording_id: recording.id,
+                user_id: user.id,
+                transcript: transcriptToSave,
+                letter_content: null,
+                status: "draft",
+                patient_name: patientName || null,
+                patient_id: patientId || null,
+                template_id: selectedTemplateId || null,
+              });
+            }
           }
           toast.success("Saved as a draft — you can find it in Recordings or Letters.");
         }
@@ -1737,21 +1887,41 @@ const Record = () => {
                       )}
                     </Button>
                     {/* Discard separated visually so accidental clicks are unlikely.
-                        Auto-saves as a draft before clearing — see handleDiscard. */}
+                        A confirm dialog also guards against mis-taps — Mohamed
+                        reported clinicians losing sessions to accidental clicks. */}
                     <div className="pt-3 border-t border-border/40 flex justify-center">
-                      <button
-                        type="button"
-                        onClick={handleDiscard}
-                        disabled={discarding}
-                        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                      >
-                        {discarding ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <RotateCcw className="h-3 w-3" />
-                        )}
-                        {discarding ? "Saving draft..." : "Discard (saves as draft)"}
-                      </button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <button
+                            type="button"
+                            disabled={discarding}
+                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                          >
+                            {discarding ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <RotateCcw className="h-3 w-3" />
+                            )}
+                            {discarding ? "Saving draft..." : "Discard (saves as draft)"}
+                          </button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Discard this recording?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              We'll save your transcript{chunksRef.current.length > 0 ? " and audio" : ""} as a
+                              draft in Recordings so you can come back to it — but the current
+                              session on this page will be cleared.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Keep recording</AlertDialogCancel>
+                            <AlertDialogAction onClick={handleDiscard}>
+                              Discard &amp; save draft
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   </div>
                 )}

@@ -45,8 +45,22 @@ serve(async (req) => {
     // The client sends the string "none" when the user picks "No template —
     // follow my instructions only". Distinguish it from `undefined` (keep the
     // letter's current template) and from a real UUID (switch templates).
-    const noTemplate = template_id === "none";
-    const effectiveTemplateId = noTemplate ? null : (template_id as string | undefined);
+    //
+    // Any non-UUID sentinel other than "none" (from an unknown future client)
+    // is treated as "no template" rather than being passed to Postgres, which
+    // would otherwise fail with "invalid input syntax for type uuid" and
+    // surface as the generic "non-2xx" error in the UI.
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const rawTemplateId = typeof template_id === "string" ? template_id : undefined;
+    const noTemplate = rawTemplateId === "none";
+    const isValidUuid = !!rawTemplateId && UUID_RE.test(rawTemplateId);
+    const effectiveTemplateId = noTemplate
+      ? null
+      : isValidUuid
+      ? rawTemplateId
+      : rawTemplateId === undefined
+      ? undefined
+      : null; // unknown sentinel — treat like no template rather than crashing on the DB cast
 
     // Load the existing letter (RLS ensures user can only load their own)
     const { data: letter, error: letterErr } = await supabase
@@ -132,11 +146,13 @@ Return only the revised letter — no preamble, no commentary, no "Revised Lette
     // structure — it should work purely from the transcript + user instructions.
     let templateGuidance = "";
     if (!noTemplate && effectiveTemplateId) {
+      // maybeSingle so a stale/deleted template id doesn't 500 the request —
+      // we just fall back to no template guidance.
       const { data: tmpl } = await supabase
         .from("templates")
         .select("prompt, name")
         .eq("id", effectiveTemplateId)
-        .single();
+        .maybeSingle();
       if (tmpl?.prompt) {
         templateGuidance = `\n\nADDITIONAL STRUCTURAL GUIDANCE — reformat the letter to follow this template's structure and conventions (draw all clinical detail from the transcript):\n\n${tmpl.prompt}`;
       }
@@ -201,7 +217,11 @@ revised letter.`
       .update({
         letter_content: newContent,
         status: "draft",
-        template_id: noTemplate ? null : (effectiveTemplateId || letter.template_id),
+        template_id: noTemplate
+          ? null
+          : isValidUuid
+          ? effectiveTemplateId
+          : letter.template_id, // keep whatever was on the letter — never write a non-UUID
       })
       .eq("id", letter_id);
 

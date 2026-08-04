@@ -31,6 +31,16 @@ import {
 import { Mic, Search, MoreHorizontal, FileText, Trash2, Sparkles, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const statusColors: Record<string, string> = {
   uploaded: "bg-muted text-muted-foreground",
@@ -84,6 +94,9 @@ const Recordings = () => {
   // If an existing letter is present, it's deleted first so generate-letter
   // can create a fresh one without violating any unique constraints.
   const [generatingId, setGeneratingId] = useState<string | null>(null);
+  // Guard against mis-taps — Mohamed reported clinicians deleting sessions by
+  // accident, which is irreversible. Confirm before calling deleteMutation.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const handleGenerateForRecording = async (rec: any, existingLetterId: string | null) => {
     setGeneratingId(rec.id);
     try {
@@ -270,7 +283,14 @@ const Recordings = () => {
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuItem
-                              onClick={() => deleteMutation.mutate(rec.id)}
+                              onClick={(e) => {
+                                // Radix DropdownMenu closes on item click and unmounts, which
+                                // cancels any AlertDialog we open in the same tick. Defer by a
+                                // frame so the dialog mounts cleanly after the menu closes.
+                                e.preventDefault();
+                                const id = rec.id;
+                                requestAnimationFrame(() => setPendingDeleteId(id));
+                              }}
                               className="text-destructive focus:text-destructive"
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
@@ -370,7 +390,14 @@ const Recordings = () => {
                                   {letter ? "Regenerate Letter" : "Generate Letter"}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => deleteMutation.mutate(rec.id)}
+                                  onClick={(e) => {
+                                // Radix DropdownMenu closes on item click and unmounts, which
+                                // cancels any AlertDialog we open in the same tick. Defer by a
+                                // frame so the dialog mounts cleanly after the menu closes.
+                                e.preventDefault();
+                                const id = rec.id;
+                                requestAnimationFrame(() => setPendingDeleteId(id));
+                              }}
                                   className="text-destructive focus:text-destructive"
                                 >
                                   <Trash2 className="mr-2 h-4 w-4" />
@@ -389,6 +416,33 @@ const Recordings = () => {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => !open && setPendingDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this recording?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes the recording, its audio file, and any linked letter.
+              You can't undo this.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (pendingDeleteId) deleteMutation.mutate(pendingDeleteId);
+                setPendingDeleteId(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

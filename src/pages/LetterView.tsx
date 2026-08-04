@@ -149,6 +149,7 @@ const LetterView = () => {
 
     const userInstructions = (overrideInstructions ?? instructions).trim();
     const templateChanged = regenTemplateId !== "keep";
+    const noTemplate = regenTemplateId === "none";
 
     // Allow regeneration if user provided instructions OR changed the template (or both).
     if (!userInstructions && !templateChanged) {
@@ -156,10 +157,14 @@ const LetterView = () => {
       return;
     }
 
-    // If only a template change with no explicit instructions, send a default instruction
-    // telling the AI to reformat using the new template's structure.
-    const finalInstructions = userInstructions ||
-      "Reformat the existing letter using the structure and conventions defined in the system prompt above. Preserve all clinical content; do not add or remove information.";
+    // Default instructions when the user hasn't typed anything:
+    //  - "No template" — tell the AI to drop template structure entirely.
+    //  - Template switch — reformat using the new template's structure.
+    const finalInstructions =
+      userInstructions ||
+      (noTemplate
+        ? "Rewrite the letter as a clean, well-organised clinical letter without following any specific template structure. Use plain paragraphs and headings only where they make the letter clearer. Preserve all clinical content; do not add or remove information."
+        : "Reformat the existing letter using the structure and conventions defined in the system prompt above. Preserve all clinical content; do not add or remove information.");
 
     setRegenerating(true);
 
@@ -170,19 +175,33 @@ const LetterView = () => {
           instructions: finalInstructions,
           // "none" means the user chose to bypass any template — the server treats it as no
           // template guidance and ignores the letter's currently-attached template.
-          template_id:
-            regenTemplateId === "none"
-              ? "none"
-              : templateChanged
-              ? regenTemplateId
-              : undefined,
+          template_id: noTemplate ? "none" : templateChanged ? regenTemplateId : undefined,
           // Use faster model for quick prompts (small refinements). Custom instructions and template
           // switches use the full model for higher quality.
           fast: fast === true,
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        // Supabase wraps the server body in a FunctionsHttpError context — pull the real
+        // error text so users see something like "invalid input syntax for type uuid" rather
+        // than the generic "Edge Function returned a non-2xx status code".
+        let serverMessage = error.message;
+        try {
+          const ctx = (error as any).context;
+          if (ctx?.json) serverMessage = (await ctx.json())?.error || serverMessage;
+          else if (ctx?.text) {
+            const body = await ctx.text();
+            try {
+              serverMessage = JSON.parse(body)?.error || body;
+            } catch {
+              serverMessage = body;
+            }
+          }
+        } catch {/* ignore parse failures */}
+        throw new Error(serverMessage);
+      }
+      if (data?.error) throw new Error(data.error);
       if (data?.letter_content) {
         setEditedContent(data.letter_content);
         setLetter({ ...letter, letter_content: data.letter_content, status: "draft" });
