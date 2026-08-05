@@ -211,6 +211,14 @@ const Record = () => {
   // remember the storage path so processAudio can reuse it instead of uploading
   // the same blob a second time when the user hits Generate.
   const medicalUploadPathRef = useRef<string | null>(null);
+  // For accurate dictation: a second MediaRecorder that emits self-contained
+  // ~10s webm segments. Each segment gets uploaded and transcribed with MedASR
+  // and the result is appended to the on-screen transcript — so the user sees
+  // the MedASR transcript growing live instead of waiting until Stop.
+  const segmentRecorderRef = useRef<MediaRecorder | null>(null);
+  const segmentChunksRef = useRef<Blob[]>([]);
+  const segmentTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const segmentInFlightRef = useRef(0);
   // WebSocket reconnection state
   const pendingChunksRef = useRef<Blob[]>([]); // chunks captured during disconnect
   const reconnectAttemptRef = useRef(0);
@@ -304,10 +312,10 @@ const Record = () => {
       } catch {
         /* quota / private mode — swallow */
       }
-      // Also mirror to Supabase every ~60s so the interrupted session shows up
-      // in the Recordings list directly — Mohamed reported that recovery via
-      // localStorage-only was invisible outside the Record page.
-      if (transcriptRef.current && now - autoDraftSaveThrottleRef.current >= 60_000) {
+      // Also mirror to Supabase every ~15s so the interrupted session shows up
+      // in the Recordings list quickly — Mohamed reported losing sessions when
+      // the browser back button was pressed within the first minute.
+      if (transcriptRef.current && now - autoDraftSaveThrottleRef.current >= 15_000) {
         autoDraftSaveThrottleRef.current = now;
         void autosaveDraftToServer();
       }
@@ -413,6 +421,58 @@ const Record = () => {
     } catch {/* ignore */}
     setRecovery(null);
   }, []);
+
+  // Catch accidental navigation away (browser back, tab close, refresh)
+  // while the user has unsaved work. We fire a best-effort autosave to
+  // Supabase so the draft appears in Recordings, and — for the tab-close
+  // case — show a native "Leave site?" prompt so the user has a chance
+  // to reconsider.
+  useEffect(() => {
+    const hasUnsavedWork = () =>
+      isRecording || (!!transcriptRef.current && !autoDraftRecordingIdRef.current);
+
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedWork()) return;
+      // Fire-and-forget final autosave; browsers may not wait for it to
+      // finish, but a Supabase POST is short and often lands.
+      void autosaveDraftToServer();
+      e.preventDefault();
+      // Legacy compat — returning a string used to customise the prompt.
+      // Modern browsers show a generic message but still respect preventDefault.
+      e.returnValue = "";
+      return "";
+    };
+
+    // pagehide fires even when beforeunload doesn't (e.g. on iOS Safari).
+    // Same fire-and-forget autosave; no prompt because we can't show one here.
+    const onPageHide = () => {
+      if (hasUnsavedWork()) void autosaveDraftToServer();
+    };
+
+    // Backgrounding the tab often precedes it being killed — save then too.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden" && hasUnsavedWork()) {
+        void autosaveDraftToServer();
+      }
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", onPageHide);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+
+      // React Router back/forward → the component unmounts but the tab
+      // stays open. Fire a final autosave on unmount so the in-progress
+      // session lands in Recordings.
+      if (transcriptRef.current || isRecording) {
+        void autosaveDraftToServer();
+      }
+    };
+  }, [isRecording, autosaveDraftToServer]);
 
   // Applies a recovered snapshot to the current form so the user can save it as
   // a draft or generate a letter from the recovered transcript. Audio isn't
@@ -814,6 +874,51 @@ const Record = () => {
       setElapsed(0);
       setHasRecording(false);
 
+      // Accurate dictation live-transcript: a second MediaRecorder emits a
+      // fresh, self-contained webm segment every 10s. Each segment is
+      // uploaded and run through MedASR, and the returned text is appended
+      // to the on-screen transcript so the clinician can review as they go.
+      if (useMedicalDictation) {
+        try {
+          segmentChunksRef.current = [];
+          const segRecorder = new MediaRecorder(stream, { mimeType });
+          segRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) segmentChunksRef.current.push(e.data);
+          };
+          segRecorder.onstop = () => {
+            const parts = segmentChunksRef.current;
+            segmentChunksRef.current = [];
+            if (parts.length === 0) return;
+            const blob = new Blob(parts, { type: "audio/webm" });
+            void transcribeSegmentAndAppend(blob);
+          };
+          segmentRecorderRef.current = segRecorder;
+          segRecorder.start();
+
+          segmentTickRef.current = setInterval(() => {
+            const active = segmentRecorderRef.current;
+            if (!active || active.state !== "recording") return;
+            if (isPausedRef.current) return; // don't transcribe silence during a pause
+            try {
+              active.stop();
+              // start() throws if the previous stop hasn't fully settled; a
+              // microtask delay is enough for the state to become "inactive".
+              queueMicrotask(() => {
+                try {
+                  if (active.state === "inactive") active.start();
+                } catch (err) {
+                  console.warn("[Segment] Restart failed:", err);
+                }
+              });
+            } catch (err) {
+              console.warn("[Segment] Stop failed:", err);
+            }
+          }, 10000);
+        } catch (err) {
+          console.warn("[Segment] Could not start segment recorder:", err);
+        }
+      }
+
       const startTime = Date.now();
       timerRef.current = setInterval(() => {
         setElapsed(
@@ -917,10 +1022,20 @@ const Record = () => {
     if (keepAliveRef.current) clearInterval(keepAliveRef.current);
     if (healthCheckRef.current) clearInterval(healthCheckRef.current);
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    if (segmentTickRef.current) clearInterval(segmentTickRef.current);
     timerRef.current = null;
     keepAliveRef.current = null;
     healthCheckRef.current = null;
     reconnectTimerRef.current = null;
+    segmentTickRef.current = null;
+
+    // Stop the medical segment recorder — its onstop callback will fire one
+    // last time and transcribe whatever it captured before Stop was pressed.
+    const segRec = segmentRecorderRef.current;
+    if (segRec && segRec.state !== "inactive") {
+      try { segRec.stop(); } catch {/* ignore */}
+    }
+    segmentRecorderRef.current = null;
 
     const recorder = mediaRecorderRef.current;
     if (recorder && (recorder.state === "recording" || recorder.state === "paused")) {
@@ -1018,6 +1133,46 @@ const Record = () => {
       return null;
     } finally {
       setIsTranscribing(false);
+    }
+  }, []);
+
+  // Upload a single 10-second segment blob to MedASR and APPEND the returned
+  // text to the live transcript. Fire-and-forget: any single segment failing
+  // (network blip, no speech, etc) doesn't stop subsequent segments from
+  // running — the final Stop step still re-transcribes the full audio so
+  // nothing is lost.
+  const transcribeSegmentAndAppend = useCallback(async (segmentBlob: Blob) => {
+    if (segmentBlob.size < 2000) return; // too small to be real speech
+    segmentInFlightRef.current += 1;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const fileName = `${user.id}/segments/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.webm`;
+      const { error: upErr } = await supabase.storage
+        .from("audio-recordings")
+        .upload(fileName, segmentBlob);
+      if (upErr) {
+        console.warn("[Segment] Upload failed:", upErr.message);
+        return;
+      }
+      const { data, error } = await supabase.functions.invoke("transcribe-audio", {
+        body: { audio_path: fileName, engine: "accurate" },
+      });
+      if (error) {
+        console.warn("[Segment] Transcribe failed:", error.message);
+        return;
+      }
+      const text = ((data?.transcript || "") as string).trim();
+      if (!text) return;
+      setTranscript((prev) => {
+        const next = prev ? `${prev} ${text}` : text;
+        transcriptRef.current = next;
+        return next;
+      });
+    } catch (e) {
+      console.warn("[Segment] Failed:", e);
+    } finally {
+      segmentInFlightRef.current = Math.max(0, segmentInFlightRef.current - 1);
     }
   }, []);
 
@@ -1246,9 +1401,22 @@ const Record = () => {
       toast.error("No recording available");
       return;
     }
-    // For accurate dictation, transcribe the finished audio with MedASR first
-    // so the review screen shows the same transcript that will drive letter
-    // generation — no Deepgram-vs-MedASR mismatch.
+
+    // For accurate dictation, wait for any in-flight 10-second segments to
+    // finish transcribing so their text lands in the transcript before we
+    // move to review. Cap the wait so a stuck request doesn't block the UI.
+    if (useMedicalDictation && segmentInFlightRef.current > 0) {
+      setIsTranscribing(true);
+      const deadline = Date.now() + 8000;
+      while (segmentInFlightRef.current > 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      setIsTranscribing(false);
+    }
+
+    // Only fall back to a full-audio MedASR pass if the segmented approach
+    // yielded nothing (all segments failed, network was down, etc). Normal
+    // path: transcript is already built from segments; skip re-transcription.
     if (useMedicalDictation && !transcriptRef.current) {
       const result = await transcribeFinishedAudioForMedical();
       if (!result) return; // toast already shown
@@ -1341,74 +1509,86 @@ const Record = () => {
     if (transcriptToSave || audioBlob) {
       setDiscarding(true);
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          let audioPath: string | null = null;
-          if (audioBlob) {
-            audioPath = `${user.id}/${Date.now()}-draft.webm`;
-            await supabase.storage.from("audio-recordings").upload(audioPath, audioBlob);
-          }
+        const { data: { user }, error: userErr } = await supabase.auth.getUser();
+        if (userErr) throw new Error(`Auth: ${userErr.message}`);
+        if (!user) throw new Error("You're not signed in.");
 
-          const existingRecId = autoDraftRecordingIdRef.current;
-          if (existingRecId) {
-            // Update the auto-draft with the final duration, meta and audio.
-            await supabase
-              .from("recordings")
+        let audioPath: string | null = null;
+        if (audioBlob) {
+          audioPath = `${user.id}/${Date.now()}-draft.webm`;
+          const { error: upErr } = await supabase.storage
+            .from("audio-recordings")
+            .upload(audioPath, audioBlob);
+          if (upErr) throw new Error(`Audio upload: ${upErr.message}`);
+        }
+
+        const existingRecId = autoDraftRecordingIdRef.current;
+        if (existingRecId) {
+          const { error: updRecErr } = await supabase
+            .from("recordings")
+            .update({
+              audio_path: audioPath ?? "",
+              duration_seconds: elapsed,
+              patient_name: patientName || null,
+              patient_id: patientId || null,
+              mode: modeRef.current,
+              template_id: selectedTemplateId,
+            })
+            .eq("id", existingRecId);
+          if (updRecErr) throw new Error(`Recording update: ${updRecErr.message}`);
+
+          if (autoDraftLetterIdRef.current && transcriptToSave) {
+            const { error: updLetErr } = await supabase
+              .from("letters")
               .update({
-                audio_path: audioPath ?? "",
-                duration_seconds: elapsed,
-                patient_name: patientName || null,
-                patient_id: patientId || null,
-                mode: modeRef.current,
-                template_id: selectedTemplateId,
-              })
-              .eq("id", existingRecId);
-            if (autoDraftLetterIdRef.current && transcriptToSave) {
-              await supabase
-                .from("letters")
-                .update({
-                  transcript: transcriptToSave,
-                  patient_name: patientName || null,
-                  patient_id: patientId || null,
-                  template_id: selectedTemplateId || null,
-                })
-                .eq("id", autoDraftLetterIdRef.current);
-            }
-            autoDraftRecordingIdRef.current = null;
-            autoDraftLetterIdRef.current = null;
-          } else {
-            const { data: recording } = await supabase
-              .from("recordings")
-              .insert({
-                user_id: user.id,
-                audio_path: audioPath ?? "",
-                status: "draft",
-                duration_seconds: elapsed,
-                patient_name: patientName || null,
-                patient_id: patientId || null,
-                mode: modeRef.current,
-                template_id: selectedTemplateId,
-              })
-              .select()
-              .single();
-            if (recording && transcriptToSave) {
-              await supabase.from("letters").insert({
-                recording_id: recording.id,
-                user_id: user.id,
                 transcript: transcriptToSave,
-                letter_content: null,
-                status: "draft",
                 patient_name: patientName || null,
                 patient_id: patientId || null,
                 template_id: selectedTemplateId || null,
-              });
-            }
+              })
+              .eq("id", autoDraftLetterIdRef.current);
+            if (updLetErr) throw new Error(`Letter update: ${updLetErr.message}`);
           }
-          toast.success("Saved as a draft — you can find it in Recordings or Letters.");
+          autoDraftRecordingIdRef.current = null;
+          autoDraftLetterIdRef.current = null;
+        } else {
+          const { data: recording, error: insRecErr } = await supabase
+            .from("recordings")
+            .insert({
+              user_id: user.id,
+              audio_path: audioPath ?? "",
+              status: "draft",
+              duration_seconds: elapsed,
+              patient_name: patientName || null,
+              patient_id: patientId || null,
+              mode: modeRef.current,
+              template_id: selectedTemplateId,
+            })
+            .select()
+            .single();
+          if (insRecErr || !recording) {
+            throw new Error(`Recording insert: ${insRecErr?.message || "unknown"}`);
+          }
+          if (transcriptToSave) {
+            const { error: insLetErr } = await supabase.from("letters").insert({
+              recording_id: recording.id,
+              user_id: user.id,
+              transcript: transcriptToSave,
+              letter_content: null,
+              status: "draft",
+              patient_name: patientName || null,
+              patient_id: patientId || null,
+              template_id: selectedTemplateId || null,
+            });
+            if (insLetErr) throw new Error(`Letter insert: ${insLetErr.message}`);
+          }
         }
-      } catch (e) {
+        toast.success("Saved as a draft — you can find it in Recordings or Letters.");
+      } catch (e: any) {
         console.error("[record] Failed to save discard draft:", e);
-        toast.error("Couldn't save as a draft — discarding anyway.");
+        // Surface the actual error so we know why the draft didn't appear —
+        // previously this was a generic message that hid real RLS / schema issues.
+        toast.error(e?.message || "Couldn't save as a draft — discarding anyway.");
       } finally {
         setDiscarding(false);
       }
@@ -2006,9 +2186,9 @@ const Record = () => {
                         <div className="font-medium text-slate-900 dark:text-slate-100 mb-0.5">
                           Accurate dictation module
                         </div>
-                        You are using the accurate dictation module. Because of the
-                        enhanced transcription process, there may be a short delay
-                        after you press Stop before the transcript becomes available.
+                        The medical-domain engine transcribes as you speak, in
+                        ~10 second segments. The first block of text should
+                        appear about 10–15 seconds after you start dictating.
                       </div>
                     </div>
                   </div>
@@ -2022,7 +2202,7 @@ const Record = () => {
                   placeholder={
                     useMedicalDictation
                       ? isRecording
-                        ? "Recording… transcript will appear here after you press Stop."
+                        ? "Recording… transcript will appear here every ~10 seconds."
                         : isTranscribing
                         ? "Transcribing with the medical engine…"
                         : "Your transcript will appear here after recording."
