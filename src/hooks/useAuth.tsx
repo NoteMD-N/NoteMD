@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { purgeAllLocalPhi } from "@/lib/local-phi";
 
 interface AuthContextType {
   user: User | null;
@@ -18,7 +19,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // GDPR Art. 32: patient-identifiable data must not outlive the session on
+      // the device. Clinical workstations are routinely shared, so any locally
+      // cached PHI (the crash-recovery snapshot) is purged on sign-out.
+      if (event === "SIGNED_OUT" || !session) {
+        purgeAllLocalPhi();
+      }
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);

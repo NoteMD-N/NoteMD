@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { readPhi, writePhi, clearPhi, isSnapshotFresh } from "@/lib/local-phi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -251,7 +252,8 @@ const Record = () => {
   // reliably in localStorage, but the transcript + patient meta are cheap.
   // Saved every few seconds while recording so if the tab is closed, the
   // user is offered to recover their in-progress transcript on next open.
-  const RECOVERY_KEY = "notemd.recording-recovery.v1";
+  // Slot name within the per-user PHI namespace (see src/lib/local-phi.ts).
+  const RECOVERY_SLOT = "recording-recovery";
   type RecoverySnapshot = {
     savedAt: number;
     startedAt: number;
@@ -263,6 +265,8 @@ const Record = () => {
     elapsed: number;
   };
   const recoverySaveThrottleRef = useRef<number>(0);
+  // Signed-in user id, used to namespace the locally-cached snapshot.
+  const recoveryUserIdRef = useRef<string | null>(null);
   const [recovery, setRecovery] = useState<RecoverySnapshot | null>(null);
   // Server-side autosave state: once we create a draft row on Supabase we
   // remember its id so subsequent autosaves update the same row, and normal
@@ -285,20 +289,19 @@ const Record = () => {
   // session (browser Back, tab closed, crash). Only surface it if it's from the
   // last 24h — anything older is likely stale.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(RECOVERY_KEY);
-      if (!raw) return;
-      const snap = JSON.parse(raw) as RecoverySnapshot;
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      recoveryUserIdRef.current = user.id;
+
+      const snap = readPhi<RecoverySnapshot>(user.id, RECOVERY_SLOT);
       if (!snap?.transcript) return;
-      const ageMs = Date.now() - (snap.savedAt || 0);
-      if (ageMs > 24 * 60 * 60 * 1000) {
-        localStorage.removeItem(RECOVERY_KEY);
+      if (!isSnapshotFresh(snap.savedAt)) {
+        clearPhi(user.id, RECOVERY_SLOT);
         return;
       }
       setRecovery(snap);
-    } catch {
-      /* corrupt snapshot — ignore */
-    }
+    })();
   }, []);
 
   // While recording, snapshot the transcript + patient meta every ~3s. Never
@@ -319,10 +322,10 @@ const Record = () => {
         transcript: transcriptRef.current || "",
         elapsed,
       };
-      try {
-        localStorage.setItem(RECOVERY_KEY, JSON.stringify(snap));
-      } catch {
-        /* quota / private mode — swallow */
+      // Scoped to the signed-in user so one clinician can never recover
+      // another's snapshot from a shared workstation.
+      if (recoveryUserIdRef.current) {
+        writePhi(recoveryUserIdRef.current, RECOVERY_SLOT, snap);
       }
       // Also mirror to Supabase every ~15s so the interrupted session shows up
       // in the Recordings list quickly — Mohamed reported losing sessions when
@@ -428,9 +431,9 @@ const Record = () => {
   // Clear the recovery snapshot once the session is finished in the normal way
   // (letter generated, or explicitly discarded — see handleDiscard).
   const clearRecovery = useCallback(() => {
-    try {
-      localStorage.removeItem(RECOVERY_KEY);
-    } catch {/* ignore */}
+    if (recoveryUserIdRef.current) {
+      clearPhi(recoveryUserIdRef.current, RECOVERY_SLOT);
+    }
     setRecovery(null);
   }, []);
 
