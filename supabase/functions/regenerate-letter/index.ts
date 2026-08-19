@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveTemplateSelection } from "../_shared/transcription-policy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,17 +51,8 @@ serve(async (req) => {
     // is treated as "no template" rather than being passed to Postgres, which
     // would otherwise fail with "invalid input syntax for type uuid" and
     // surface as the generic "non-2xx" error in the UI.
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const rawTemplateId = typeof template_id === "string" ? template_id : undefined;
-    const noTemplate = rawTemplateId === "none";
-    const isValidUuid = !!rawTemplateId && UUID_RE.test(rawTemplateId);
-    const effectiveTemplateId = noTemplate
-      ? null
-      : isValidUuid
-      ? rawTemplateId
-      : rawTemplateId === undefined
-      ? undefined
-      : null; // unknown sentinel — treat like no template rather than crashing on the DB cast
+    const { noTemplate, effectiveTemplateId, isValidUuid } =
+      resolveTemplateSelection(template_id);
 
     // Load the existing letter (RLS ensures user can only load their own)
     const { data: letter, error: letterErr } = await supabase

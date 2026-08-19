@@ -557,7 +557,7 @@ const Settings = () => {
                       >
                         <p className="font-medium text-sm">Fast (live)</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Near real-time transcript. Best for speed.
+                          Deepgram live transcript. Fastest, slightly lower accuracy.
                         </p>
                       </button>
                       <button
@@ -572,9 +572,9 @@ const Settings = () => {
                             : "border-border hover:border-border/80"
                         }`}
                       >
-                        <p className="font-medium text-sm">Accurate (medical)</p>
+                        <p className="font-medium text-sm">Accurate (OpenAI)</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Medical-domain model. Best for clinical terminology.
+                          OpenAI transcription, tuned for UK clinical vocabulary. Highest accuracy.
                         </p>
                       </button>
                     </div>

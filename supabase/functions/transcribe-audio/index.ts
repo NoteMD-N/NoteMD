@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveProvider, providerTier } from "../_shared/transcription-policy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,6 +65,73 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
   mp4: "audio/mp4",
   ogg: "audio/ogg",
 };
+
+// ---------------------------------------------------------------------------
+// OpenAI transcription (primary "accurate" engine).
+//
+// Chosen over MedASR at the client's request after their own A/B testing.
+// Notes that matter for correctness:
+//  - The API caps uploads at 25MB. A 10s webm/opus segment is ~20-40KB and a
+//    30-minute consultation is ~15MB, so we're normally well inside it, but we
+//    check and fail with a clear message rather than a raw 413.
+//  - `prompt` biases decoding toward clinical vocabulary and UK spelling. It is
+//    a hint, NOT instructions — the model may ignore it, and it must never be
+//    used to inject content into the transcript.
+//  - `language: "en"` stops short segments being misdetected as another language.
+// ---------------------------------------------------------------------------
+const OPENAI_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+const CLINICAL_PROMPT =
+  "UK clinical dictation. British English spelling (anaemia, oedema, paediatric, " +
+  "haematology, diarrhoea, orthopaedic). Common terms: NHS, GP, mg, mcg, BD, TDS, QDS, PRN, " +
+  "PO, IV, IM, SC, ECG, MRI, CT, FBC, U&Es, LFTs, CRP, HbA1c, BP, BMI, PMH, ICE, " +
+  "sumatriptan, amlodipine, atorvastatin, levothyroxine, salbutamol, omeprazole.";
+
+async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<string> {
+  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+  if (!OPENAI_API_KEY) throw new Error("Transcription service is not configured (OPENAI_API_KEY)");
+
+  if (audioBlob.size > OPENAI_MAX_UPLOAD_BYTES) {
+    throw new Error(
+      `Recording is too large to transcribe in one request (${Math.round(audioBlob.size / 1024 / 1024)}MB, limit 25MB).`
+    );
+  }
+  if (audioBlob.size === 0) throw new Error("Audio file is empty");
+
+  // gpt-4o-transcribe is the current highest-accuracy model; whisper-1 remains
+  // available as an override via env if we ever need to pin back.
+  const model = Deno.env.get("OPENAI_TRANSCRIBE_MODEL") || "gpt-4o-transcribe";
+
+  const ext = (audioPath.split(".").pop() || "webm").toLowerCase();
+  const form = new FormData();
+  form.append("file", audioBlob, `audio.${ext}`);
+  form.append("model", model);
+  form.append("language", "en");
+  form.append("prompt", CLINICAL_PROMPT);
+  form.append("response_format", "text");
+  // temperature 0 = deterministic; avoids the model "smoothing" clinical detail.
+  form.append("temperature", "0");
+
+  const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    body: form,
+  });
+
+  if (!resp.ok) {
+    const body = await resp.text();
+    console.error("[transcribe-openai] HTTP", resp.status, body.slice(0, 500));
+    // Surface a useful message rather than a bare status code.
+    let detail = "";
+    try { detail = JSON.parse(body)?.error?.message || ""; } catch { /* plain text body */ }
+    throw new Error(`Transcription failed (HTTP ${resp.status})${detail ? `: ${detail}` : ""}`);
+  }
+
+  // response_format=text returns a bare string body, not JSON.
+  const text = (await resp.text()).trim();
+  if (!text) throw new Error("No speech detected");
+  return text;
+}
 
 async function transcribeMedical(audioBlob: Blob, audioPath: string): Promise<string> {
   const MEDASR_URL = Deno.env.get("MEDASR_URL");
@@ -161,7 +229,12 @@ serve(async (req) => {
 
     const { audio_path, engine } = await req.json();
     if (!audio_path) throw new Error("audio_path is required");
-    const useMedical = engine === "accurate" || engine === "medical";
+
+    // Engine routing lives in _shared/transcription-policy.ts so it is unit
+    // tested against the same code that runs here.
+    const provider = resolveProvider(engine, Deno.env.get("TRANSCRIBE_ACCURATE_PROVIDER"));
+    const useOpenAI = provider === "openai";
+    const useMedical = provider === "medasr";
 
     // Download audio (RLS-scoped to the caller)
     const { data: audioData, error: downloadErr } = await supabase.storage
@@ -169,12 +242,20 @@ serve(async (req) => {
       .download(audio_path);
     if (downloadErr) throw new Error(`Failed to download audio: ${downloadErr.message}`);
 
-    const transcript = useMedical
+    const transcript = useOpenAI
+      ? await transcribeOpenAI(audioData, audio_path)
+      : useMedical
       ? await transcribeMedical(audioData, audio_path)
       : await transcribeStreaming(audioData, audio_path);
 
+    // `provider` is reported back so the UI can show the clinician which engine
+    // actually produced the text they are looking at.
     return new Response(
-      JSON.stringify({ transcript, engine: useMedical ? "accurate" : "fast" }),
+      JSON.stringify({
+        transcript,
+        engine: providerTier(provider),
+        provider,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
