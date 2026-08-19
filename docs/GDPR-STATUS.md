@@ -1,7 +1,8 @@
 # NoteMD — UK GDPR status and gap analysis
 
 **Last updated:** 19 August 2026
-**Status: NOT YET COMPLIANT — see "Blocking gaps" below.**
+**Status: technical controls in place; documentation and OpenAI Zero Data
+Retention outstanding — see §3 and §5.**
 
 This document is deliberately blunt. NoteMD processes **special category data**
 (health data, UK GDPR Art. 9) about identifiable patients. Getting this wrong is
@@ -48,38 +49,71 @@ product compliant.
 
 ---
 
-## 3. Blocking gaps — must be closed before processing real patient data
+## 3. Outstanding items before processing real patient data
+
+Only §3.2 is a hard external blocker. The rest is documentation and evidence
+gathering that NoteMD controls and can run in parallel.
 
 These are ordered by how likely each is to stop the project.
 
-### 3.1 Data Processing Agreements with every sub-processor
-NoteMD is the **processor**; the NHS body or private clinic is the
-**controller**. A written Art. 28 contract is required with each sub-processor:
+### 3.1 Data Processing Agreements — mostly already in place
+**Status: likely satisfied, needs evidencing rather than negotiating.**
 
-- **OpenAI** — transcription + letter generation. OpenAI provides a DPA and
-  offers Standard Contractual Clauses with the UK International Data Transfer
-  Addendum. Must be executed.
-- **Deepgram** — fast-engine transcription. Same requirement.
-- **Supabase** — database, storage, auth. Same requirement.
-- **Resend** — letter/transcript email delivery. Same requirement.
-- **Render** — application hosting. Same requirement.
+Modern SaaS providers incorporate their DPA into the standard terms accepted at
+signup, rather than requiring a separately negotiated contract. That is the case
+for the providers in this stack, so NoteMD is in most cases *already* on a DPA
+by virtue of holding an account.
 
-**Action:** execute all five. None are in place as far as I can establish.
+What is still required is not signature but **evidence and record-keeping**: an
+NHS trust or controller will ask *which* DPA version applies, and "it is in their
+terms" is only an acceptable answer if you can produce it.
+
+| Sub-processor | Purpose | Action |
+|---|---|---|
+| OpenAI | transcription + letter generation | Confirm the API DPA applies to this account; download a copy. Note some providers require a short form to execute — verify. |
+| Deepgram | fast-engine transcription | Download the DPA referenced in the current terms. |
+| Supabase | database, storage, auth | Confirm DPA coverage on the current plan (free tiers sometimes differ). |
+| Resend | email delivery | Download the DPA. |
+| Render | application hosting | Download the DPA. |
+
+**Action:** retrieve and file a dated copy of each, and record the version in the
+ROPA (§3.7). Confirm the paid-plan terms apply — some providers' free tiers carry
+different or reduced data-protection commitments.
+
+Note also that a DPA existing does not automatically make a processor
+*appropriate* for special category health data at scale. That judgement is the
+DPIA's job (§3.4).
 
 ### 3.2 Zero Data Retention with OpenAI
-By default OpenAI retains API inputs for up to 30 days for abuse monitoring.
-For special category health data this is very hard to justify. OpenAI offers
-**Zero Data Retention (ZDR)** for eligible endpoints on request.
+**Status: NOT automatic. This remains the main technical blocker.**
+
+This one is genuinely not covered by the DPA. By default OpenAI retains API
+inputs for up to 30 days for abuse monitoring. The DPA governs *how* they may
+process that data — it does not remove the retention window.
+
+API data is not used to train OpenAI's models by default, which is a separate
+and helpful point, but it is not the same as non-retention.
+
+For special category health data a 30-day third-party retention window is hard
+to justify to a trust. OpenAI offers **Zero Data Retention** for eligible
+endpoints on request.
 
 **Action:** apply for ZDR covering both the audio transcription and chat
-completion endpoints. Until granted, patient-identifiable audio should arguably
-not be sent. This is the single most important item on this list.
+completion endpoints. Until granted, this is the strongest argument against
+putting identifiable patient data through production.
 
 ### 3.3 International transfer mechanism
-US transfers need a valid Art. 44–49 mechanism — SCCs plus the UK Addendum, and
-a documented Transfer Risk Assessment.
+**Status: mechanism likely covered; the assessment is not.**
 
-**Action:** complete a TRA per sub-processor.
+US transfers need a valid Art. 44–49 mechanism. The SCCs and UK International
+Data Transfer Addendum are normally bundled into the same auto-incorporated DPA
+covered in §3.1, so the *mechanism* is probably already in place.
+
+The **Transfer Risk Assessment** is NoteMD's own obligation and is not provided
+by the vendor.
+
+**Action:** complete a TRA per sub-processor. This is a document you write, not
+one you obtain.
 
 ### 3.4 Data Protection Impact Assessment (DPIA)
 Mandatory under Art. 35: large-scale processing of special category data using
@@ -120,18 +154,27 @@ Art. 30 register covering categories of data, recipients, transfers, retention.
 
 ## 5. Honest summary
 
-The engineering controls a developer can build are now largely in place:
-retention, erasure, export, audit logging, access control, and provenance.
+The engineering controls a developer can build are in place: retention, erasure,
+export, audit logging, access control, and provenance.
 
-**The remaining gaps are contractual and organisational, and cannot be closed
-in code.** Items 3.1 (DPAs) and 3.2 (OpenAI Zero Data Retention) in particular
-require someone at NoteMD to sign agreements. Until at least those two are
-done, my recommendation is:
+On the contractual side, the position is better than a first pass suggested:
+DPAs with these providers are generally incorporated into the terms already
+accepted at signup, so §3.1 is largely a matter of retrieving and filing
+evidence rather than negotiating agreements. International transfer mechanisms
+are usually bundled into those same DPAs.
 
-> Do not process real, identifiable patient data in production.
+**What genuinely remains outstanding:**
 
-Use synthetic or fully anonymised data for demos and pilots until the DPAs and
-ZDR are executed. If that is not acceptable to the timeline, set
-`TRANSCRIBE_ACCURATE_PROVIDER=medasr` to keep audio on self-hosted
-infrastructure — though this does not address the letter-generation path, which
-already sends transcripts to OpenAI.
+1. **OpenAI Zero Data Retention** (§3.2) — not covered by any DPA, must be
+   applied for. This is the main technical blocker.
+2. **NoteMD's own documentation** — DPIA, lawful basis, ROPA, Transfer Risk
+   Assessments, privacy-notice wording, breach runbook. No vendor supplies
+   these; they are the controller/processor's own records.
+3. **Evidence pack** — dated copies of each DPA, for procurement.
+
+Recommendation: item 1 is the one to start today, as it has an external lead
+time. Items 2 and 3 are internal work that can proceed in parallel.
+
+Until ZDR is granted, the safer default for pilots is synthetic or anonymised
+data. `TRANSCRIBE_ACCURATE_PROVIDER=medasr` keeps audio on self-hosted
+infrastructure, though letter generation still sends transcripts to OpenAI.
