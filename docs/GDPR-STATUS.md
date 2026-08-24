@@ -63,8 +63,8 @@ individual trust if any of them mandate UK-only rather than UK/EEA.
 | OpenAI | Audio + transcripts in transit; retained up to 30 days unless ZDR granted | Global by default | **Action: move to an EU-resident project** |
 | Deepgram | Consultation/fast-engine audio in transit | Global by default | Action, or remove entirely (see below) |
 | Resend | Letters and transcripts sent by email | Check account region | Action: switch to EU region |
-| Render | Static frontend bundle only — **no patient data at rest** | Check service region | Low priority; move for tidiness |
-| MedASR (Cloud Run) | Fallback engine only, currently unused | Check deployment region | Redeploy to `europe-west2` if retained |
+| Render | Static frontend bundle only — **no patient data at rest** | Check service region | Low priority; no PHI at rest there |
+| MedASR (Cloud Run) | Fallback engine only, currently unused | **`us-east4` (Virginia)**, image in `us-central1` (Iowa) | **Action: redeploy to EU, or delete** — see `medasr-service/deploy-eu.sh` |
 
 **The important line in that table is the first one:** the database and audio
 storage — everything that actually persists — are already in the EU. The
