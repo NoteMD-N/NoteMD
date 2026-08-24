@@ -72,3 +72,72 @@ describe("isEuResidentStreamingHost — residency assertion", () => {
     expect(isEuResidentStreamingHost("https://api.deepgram.com")).toBe(false);
   });
 });
+
+import { resolveResidencyVerdict } from "../../supabase/functions/_shared/transcription-policy";
+
+/**
+ * Verdict correlation.
+ *
+ * The first version of the verification script tested each endpoint in
+ * isolation and reported a rejected-everywhere key as "GOOD — region-locked",
+ * which is the opposite of the truth. These cases pin the correlation.
+ */
+describe("resolveResidencyVerdict", () => {
+  const EU = { configuredReachable: true, euConfigured: true };
+
+  it("EU accepted + global rejected = region-locked credential (best case)", () => {
+    expect(resolveResidencyVerdict({
+      ...EU, configuredKeyAccepted: true, globalKeyAccepted: false,
+    })).toBe("eu_ok_region_locked");
+  });
+
+  it("EU accepted + global accepted = working, but not region-locked", () => {
+    expect(resolveResidencyVerdict({
+      ...EU, configuredKeyAccepted: true, globalKeyAccepted: true,
+    })).toBe("eu_ok");
+  });
+
+  it("EU rejected + global accepted = account not EU-provisioned", () => {
+    expect(resolveResidencyVerdict({
+      ...EU, configuredKeyAccepted: false, globalKeyAccepted: true,
+    })).toBe("not_provisioned");
+  });
+
+  it("rejected everywhere = INVALID KEY, never 'region-locked'", () => {
+    // The exact misdiagnosis that shipped in the first script.
+    const verdict = resolveResidencyVerdict({
+      ...EU, configuredKeyAccepted: false, globalKeyAccepted: false,
+    });
+    expect(verdict).toBe("invalid_key");
+    expect(verdict).not.toBe("eu_ok_region_locked");
+  });
+
+  it("unreachable endpoint is never reported as a residency pass", () => {
+    const verdict = resolveResidencyVerdict({
+      configuredReachable: false,
+      euConfigured: true,
+      configuredKeyAccepted: null,
+      globalKeyAccepted: null,
+    });
+    expect(verdict).toBe("unreachable");
+  });
+
+  it("a non-EU configuration is flagged even when the key works", () => {
+    expect(resolveResidencyVerdict({
+      configuredReachable: true,
+      euConfigured: false,
+      configuredKeyAccepted: true,
+      globalKeyAccepted: true,
+    })).toBe("not_eu_configured");
+  });
+
+  it("never reports a pass verdict when the key was not accepted", () => {
+    const passes = ["eu_ok", "eu_ok_region_locked"];
+    for (const globalKeyAccepted of [true, false, null]) {
+      const v = resolveResidencyVerdict({
+        ...EU, configuredKeyAccepted: false, globalKeyAccepted,
+      });
+      expect(passes).not.toContain(v);
+    }
+  });
+});

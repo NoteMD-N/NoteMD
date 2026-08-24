@@ -24,6 +24,35 @@ const Settings = () => {
   const [hospitalOrg, setHospitalOrg] = useState("");
   const [dictationEngine, setDictationEngine] = useState<"fast" | "accurate">("accurate");
   const [skipDictationReview, setSkipDictationReview] = useState(false);
+  // Data-residency self-check. Runs server-side against the configured
+  // transcription endpoint using the key already held in the function's
+  // environment, so no operator ever handles a credential to verify this.
+  const [residencyCheck, setResidencyCheck] = useState<any | null>(null);
+  const [checkingResidency, setCheckingResidency] = useState(false);
+  const runResidencyCheck = async () => {
+    setCheckingResidency(true);
+    setResidencyCheck(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("diagnostics-transcription");
+      if (error) {
+        let msg = error.message;
+        try {
+          const ctx = (error as any).context;
+          if (ctx?.json) msg = (await ctx.json())?.error || msg;
+        } catch {/* ignore */}
+        throw new Error(msg);
+      }
+      setResidencyCheck(data);
+    } catch (e: any) {
+      setResidencyCheck({
+        verdict: "error",
+        summary: e?.message || "The check could not be completed.",
+      });
+    } finally {
+      setCheckingResidency(false);
+    }
+  };
+
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -619,6 +648,83 @@ const Settings = () => {
 
         {/* Security Tab */}
         <TabsContent value="security" className="space-y-6">
+          {/* Data residency self-check */}
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
+            <CardHeader>
+              <CardTitle>Data residency check</CardTitle>
+              <CardDescription>
+                Verify that audio is processed on EU infrastructure. Sends a
+                one-second test tone — never patient data — and reports the result.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                onClick={runResidencyCheck}
+                disabled={checkingResidency}
+                variant="outline"
+                className="gap-2"
+              >
+                {checkingResidency ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Shield className="h-4 w-4" />
+                )}
+                {checkingResidency ? "Checking…" : "Run check"}
+              </Button>
+
+              {residencyCheck && (
+                <div
+                  className={`rounded-xl border p-4 text-sm ${
+                    residencyCheck.verdict === "eu_ok" ||
+                    residencyCheck.verdict === "eu_ok_region_locked"
+                      ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40"
+                      : "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40"
+                  }`}
+                >
+                  <p className="font-medium text-foreground">
+                    {residencyCheck.verdict === "eu_ok_region_locked"
+                      ? "Processing in the EU — credential is EU-restricted"
+                      : residencyCheck.verdict === "eu_ok"
+                      ? "Processing in the EU"
+                      : residencyCheck.verdict === "not_provisioned"
+                      ? "Not enabled for EU processing"
+                      : residencyCheck.verdict === "invalid_key"
+                      ? "Service credential rejected"
+                      : residencyCheck.verdict === "not_eu_configured"
+                      ? "Not configured for the EU endpoint"
+                      : residencyCheck.verdict === "unreachable"
+                      ? "Service unreachable"
+                      : "Check could not be completed"}
+                  </p>
+                  <p className="text-muted-foreground mt-1">{residencyCheck.summary}</p>
+
+                  {residencyCheck.checks?.configured && (
+                    <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <dt>Endpoint</dt>
+                      <dd className="font-mono">{residencyCheck.configured_endpoint}</dd>
+                      {residencyCheck.checks.configured.region && (
+                        <>
+                          <dt>Region</dt>
+                          <dd className="font-mono">{residencyCheck.checks.configured.region}</dd>
+                        </>
+                      )}
+                      <dt>Response</dt>
+                      <dd className="font-mono">
+                        HTTP {residencyCheck.checks.configured.http_status ?? "—"}
+                        {residencyCheck.checks.configured.latency_ms != null &&
+                          ` · ${residencyCheck.checks.configured.latency_ms}ms`}
+                      </dd>
+                      <dt>Checked</dt>
+                      <dd>{residencyCheck.checked_at
+                        ? new Date(residencyCheck.checked_at).toLocaleString()
+                        : "—"}</dd>
+                    </dl>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>
               <CardTitle>Change Password</CardTitle>

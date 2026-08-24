@@ -184,3 +184,50 @@ export function streamingWsUrl(configured: string | null | undefined, path = "v1
 export function isEuResidentStreamingHost(configured?: string | null): boolean {
   return resolveStreamingHost(configured) === STREAMING_EU_HOST;
 }
+
+
+// ---------------------------------------------------------------------------
+// Residency diagnostic verdict.
+//
+// Correlates the result of probing the configured endpoint with the result of
+// probing the global one. Testing only one endpoint cannot distinguish
+// "credential is region-locked" from "credential is invalid" — both look like
+// a rejection.
+// ---------------------------------------------------------------------------
+export type ResidencyVerdict =
+  | "eu_ok_region_locked"
+  | "eu_ok"
+  | "not_provisioned"
+  | "invalid_key"
+  | "unreachable"
+  | "not_eu_configured";
+
+export interface ResidencyInput {
+  /** Did the configured endpoint respond at all? */
+  configuredReachable: boolean;
+  /** true = key accepted, false = rejected, null = indeterminate. */
+  configuredKeyAccepted: boolean | null;
+  /** Same for the global endpoint; null when it was not probed. */
+  globalKeyAccepted: boolean | null;
+  /** Is the configured host the EU one? */
+  euConfigured: boolean;
+}
+
+export function resolveResidencyVerdict(input: ResidencyInput): ResidencyVerdict {
+  if (!input.configuredReachable) return "unreachable";
+  if (!input.euConfigured) return "not_eu_configured";
+
+  if (input.configuredKeyAccepted === true) {
+    // Accepted by EU but rejected globally => the credential is EU-scoped.
+    return input.globalKeyAccepted === false ? "eu_ok_region_locked" : "eu_ok";
+  }
+
+  if (input.configuredKeyAccepted === false) {
+    // Rejected by EU but accepted globally => account lacks EU provisioning.
+    if (input.globalKeyAccepted === true) return "not_provisioned";
+    // Rejected everywhere => the credential itself is the problem.
+    return "invalid_key";
+  }
+
+  return "unreachable";
+}
