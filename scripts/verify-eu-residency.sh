@@ -75,8 +75,11 @@ echo "============================================================"
 echo " 2. Live API check"
 echo "============================================================"
 
+# $3 = "eu" | "global" — the two endpoints have OPPOSITE success criteria.
+# For EU we want the key accepted. For Global, a rejection is GOOD: it proves
+# the key is region-scoped and cannot send audio to the US even by mistake.
 check() {
-  local host="$1" label="$2"
+  local host="$1" label="$2" kind="${3:-eu}"
   local out status time_total
   out="$(curl -s -w '\n__STATUS__%{http_code}\n__TIME__%{time_total}\n' \
       --max-time 30 \
@@ -92,29 +95,48 @@ check() {
   echo "  ${label}  (${host})"
   echo "    HTTP ${status:-error}   ${time_total:+${time_total}s}"
 
-  case "$status" in
-    200) echo "    PASS - key accepted, endpoint working" ;;
-    400) echo "    PASS - key accepted (audio rejected, which is fine here)" ;;
-    401|403) echo "    FAIL - key REJECTED. Account not provisioned for this region." ;;
-    *)   echo "    ?    - unexpected; body below"
-         printf '%s' "$out" | grep -v '^__' | head -3 | sed 's/^/      /' ;;
-  esac
+  if [ "$kind" = "eu" ]; then
+    case "$status" in
+      200) echo "    PASS - key accepted, EU endpoint working" ;;
+      400) echo "    PASS - key accepted (test audio rejected, which is fine)" ;;
+      401|403) echo "    FAIL - key REJECTED at the EU endpoint."
+               echo "           Account is NOT provisioned for EU processing." ;;
+      *)   echo "    ?    - unexpected; body below"
+           printf '%s' "$out" | grep -v '^__' | head -3 | sed 's/^/      /' ;;
+    esac
+  else
+    case "$status" in
+      401|403) echo "    GOOD - key rejected by the US endpoint."
+               echo "           The key is region-scoped: audio CANNOT reach the US." ;;
+      200|400) echo "    NOTE - key also works against the US endpoint."
+               echo "           Not a fault (the app no longer calls it), but the key"
+               echo "           is not region-locked, so a misconfiguration could route"
+               echo "           audio to the US. Ask the vendor for an EU-scoped key." ;;
+      *)   echo "    ?    - unexpected; body below"
+           printf '%s' "$out" | grep -v '^__' | head -3 | sed 's/^/      /' ;;
+    esac
+  fi
 }
 
-check "$EU_HOST" "EU     "
-check "$GLOBAL_HOST" "Global "
+check "$EU_HOST" "EU     " "eu"
+check "$GLOBAL_HOST" "Global " "global"
 
 cat <<'EOF'
 
 ============================================================
  What this means
 ============================================================
-  EU PASS      -> Patient audio can be processed in the EU. Good.
-  EU FAIL      -> Your account is not enabled for EU processing.
-                  Contact the vendor before going live; requests
-                  will fail rather than silently fall back.
+  The EU line is the one that decides this.
 
-  Global PASS is expected and harmless — it only shows the key
-  also works there. The application no longer calls it.
+  EU PASS   -> Patient audio can be processed in the EU. Good.
+  EU FAIL   -> The account is not enabled for EU processing.
+               Contact the vendor before going live; requests will
+               fail rather than silently falling back to the US.
+
+  The Global line is informational and inverted:
+
+  Global rejected -> BEST case. The key is EU-scoped, so audio
+                     cannot reach the US even by misconfiguration.
+  Global accepted -> Not a fault, but the key is not region-locked.
 ============================================================
 EOF
