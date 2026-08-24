@@ -62,6 +62,15 @@ PY
 echo
 echo "  Test audio: $(wc -c < "$TMP_WAV") bytes (440Hz tone, no patient data)"
 
+case "${DEEPGRAM_API_KEY:-}" in
+  ""|"..."|"xxxx"|"paste-key-here"|"your-key-here")
+    echo
+    echo "!! DEEPGRAM_API_KEY looks like a placeholder, not a real key:"
+    echo "!!   '${DEEPGRAM_API_KEY:-<empty>}'"
+    echo "!! Substitute the actual key from Supabase -> Edge Functions -> Secrets."
+    exit 1 ;;
+esac
+
 if [ -z "${DEEPGRAM_API_KEY:-}" ]; then
   echo
   echo "!! DEEPGRAM_API_KEY not set — skipping the live API check."
@@ -89,6 +98,7 @@ check() {
       --data-binary "@${TMP_WAV}" 2>&1)"
 
   status="$(printf '%s' "$out" | sed -n 's/^__STATUS__//p')"
+  [ "$kind" = "eu" ] && EU_STATUS="$status"
   time_total="$(printf '%s' "$out" | sed -n 's/^__TIME__//p')"
 
   echo
@@ -106,8 +116,16 @@ check() {
     esac
   else
     case "$status" in
-      401|403) echo "    GOOD - key rejected by the US endpoint."
-               echo "           The key is region-scoped: audio CANNOT reach the US." ;;
+      401|403)
+        if [ "${EU_STATUS:-}" = "200" ] || [ "${EU_STATUS:-}" = "400" ]; then
+          # EU accepted it, US did not -> genuinely region-scoped.
+          echo "    GOOD - key rejected by the US endpoint."
+          echo "           The key is region-scoped: audio CANNOT reach the US."
+        else
+          # Rejected everywhere -> the key itself is the problem.
+          echo "    n/a  - also rejected here. Combined with the EU result this"
+          echo "           means the KEY IS INVALID, not that it is region-scoped."
+        fi ;;
       200|400) echo "    NOTE - key also works against the US endpoint."
                echo "           Not a fault (the app no longer calls it), but the key"
                echo "           is not region-locked, so a misconfiguration could route"
@@ -129,9 +147,13 @@ cat <<'EOF'
   The EU line is the one that decides this.
 
   EU PASS   -> Patient audio can be processed in the EU. Good.
-  EU FAIL   -> The account is not enabled for EU processing.
-               Contact the vendor before going live; requests will
-               fail rather than silently falling back to the US.
+  EU FAIL + Global PASS -> The account is not enabled for EU
+               processing. Contact the vendor before going live.
+
+  EU FAIL + Global FAIL -> The KEY IS INVALID (expired, revoked, or
+               mistyped). This is not a residency problem. Note that
+               live transcription will also be failing in production
+               if this is the key the application is using.
 
   The Global line is informational and inverted:
 
