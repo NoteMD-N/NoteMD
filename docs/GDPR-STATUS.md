@@ -61,7 +61,7 @@ individual trust if any of them mandate UK-only rather than UK/EEA.
 | Supabase (Postgres + storage) | **All patient data at rest** — transcripts, letters, patient identifiers, audio | `eu-west-1` (Ireland) | **EU — compliant** |
 | Supabase edge functions | Transient processing only, no persistence | Co-located with project | EU |
 | OpenAI | Audio + transcripts in transit; retained up to 30 days unless ZDR granted | Global by default | **Action: move to an EU-resident project** |
-| Deepgram | Consultation/standard-engine audio in transit | **`api.eu.deepgram.com` → eu-central-1 (Frankfurt)** | **EU — configured** (verify account is EU-provisioned) |
+| Deepgram | Consultation/standard-engine audio in transit | **`api.eu.deepgram.com` → eu-central-1 (Frankfurt)** | **EU — VERIFIED 24 Aug 2026** (HTTP 200, 286ms) |
 | Resend | Letters and transcripts sent by email | Check account region | Action: switch to EU region |
 | Render | Static frontend bundle only — **no patient data at rest** | Check service region | Low priority; no PHI at rest there |
 | MedASR (Cloud Run) | Fallback engine only, currently unused | **`us-east4` (Virginia)**, image in `us-central1` (Iowa) | **Action: redeploy to EU, or delete** — see `medasr-service/deploy-eu.sh` |
@@ -81,9 +81,16 @@ changed without a frontend rebuild. `resolveStreamingHost()` fails safe to the
 EU host if the setting is missing or malformed, and the token function logs a
 warning if a non-EU endpoint is ever configured.
 
-**Verify with the vendor** that the account is provisioned for EU processing —
-a regional endpoint does not by itself guarantee the account is enabled for it,
-and requests may be rejected if it is not.
+**Verified 24 August 2026.** The in-app check (Settings -> Security -> Data
+residency check) returned HTTP 200 from `api.eu.deepgram.com`, resolving to
+`eu-central-1`, confirming the account is provisioned for EU processing. Re-run
+that check to produce dated evidence for the DPIA at any time.
+
+One residual note: the credential is accepted by the global endpoint as well,
+so it is not itself region-locked. Residency is enforced by configuration
+(`DEEPGRAM_API_BASE`, which fails safe to the EU host) rather than by the key.
+Requesting an EU-scoped key from the vendor would make it impossible to route
+audio outside the EU even by misconfiguration — a hardening step, not a gap.
 
 ### Implementation note
 `OPENAI_API_BASE` makes the OpenAI endpoint configurable, so moving to an
