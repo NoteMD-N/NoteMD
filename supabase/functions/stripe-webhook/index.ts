@@ -1,11 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@14.21.0?target=deno";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "stripe-signature, content-type",
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 // Pull current_period_end across Stripe API versions:
 //   - Older (<= 2024-04): subscription.current_period_end (number, seconds)

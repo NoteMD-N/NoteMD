@@ -1,12 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveProvider, providerTier, streamingHttpUrl } from "../_shared/transcription-policy.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 // GCP identity token (for private Cloud Run service auth)
 async function getGcpIdentityToken(serviceAccountKey: string, targetAudience: string): Promise<string> {
@@ -65,7 +60,6 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
   mp4: "audio/mp4",
   ogg: "audio/ogg",
 };
-
 
 // ---------------------------------------------------------------------------
 // OpenAI endpoint base.

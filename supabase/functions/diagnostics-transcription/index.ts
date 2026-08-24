@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { corsHeaders } from "../_shared/cors.ts";
 import {
   streamingHttpUrl,
   resolveStreamingHost,
@@ -22,12 +23,6 @@ import {
  * the response is phrased in terms of endpoints and regions, since the choice
  * of engine is proprietary. Vendor detail goes to the server log only.
  */
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
 
 /** Build a small mono 16-bit PCM WAV containing a test tone. */
 function makeTestWav(seconds = 1, sampleRate = 16000, freq = 440): Uint8Array {

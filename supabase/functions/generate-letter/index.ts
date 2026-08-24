@@ -6,12 +6,7 @@ import {
   resolveTemplateSelection,
   streamingHttpUrl,
 } from "../_shared/transcription-policy.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 // ============================================================
 // GCP identity token (for Cloud Run private service auth)
@@ -77,7 +72,6 @@ function contentTypeFor(path: string): string {
   const ext = (path.split(".").pop() || "webm").toLowerCase();
   return CONTENT_TYPE_MAP[ext] || "audio/webm";
 }
-
 
 // ---------------------------------------------------------------------------
 // OpenAI endpoint base.
