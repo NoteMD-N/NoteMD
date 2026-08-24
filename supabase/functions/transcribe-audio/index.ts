@@ -66,6 +66,22 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
   ogg: "audio/ogg",
 };
 
+
+// ---------------------------------------------------------------------------
+// OpenAI endpoint base.
+//
+// Data residency: OpenAI serves EU-resident projects from a regional hostname.
+// Keeping the base URL in an env var means switching NoteMD onto an EU-resident
+// OpenAI project is a configuration change, not a redeploy of application code.
+// Defaults to the global endpoint so behaviour is unchanged until it is set.
+//
+//   OPENAI_API_BASE=https://eu.api.openai.com/v1
+// ---------------------------------------------------------------------------
+function openAiUrl(path: string): string {
+  const base = (Deno.env.get("OPENAI_API_BASE") || "https://api.openai.com/v1").replace(/\/+$/, "");
+  return `${base}/${path.replace(/^\/+/, "")}`;
+}
+
 // ---------------------------------------------------------------------------
 // OpenAI transcription (primary "accurate" engine).
 //
@@ -112,7 +128,7 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
   // temperature 0 = deterministic; avoids the model "smoothing" clinical detail.
   form.append("temperature", "0");
 
-  const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+  const resp = await fetch(openAiUrl("audio/transcriptions"), {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
     body: form,

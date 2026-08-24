@@ -8,6 +8,22 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+
+// ---------------------------------------------------------------------------
+// OpenAI endpoint base.
+//
+// Data residency: OpenAI serves EU-resident projects from a regional hostname.
+// Keeping the base URL in an env var means switching NoteMD onto an EU-resident
+// OpenAI project is a configuration change, not a redeploy of application code.
+// Defaults to the global endpoint so behaviour is unchanged until it is set.
+//
+//   OPENAI_API_BASE=https://eu.api.openai.com/v1
+// ---------------------------------------------------------------------------
+function openAiUrl(path: string): string {
+  const base = (Deno.env.get("OPENAI_API_BASE") || "https://api.openai.com/v1").replace(/\/+$/, "");
+  return `${base}/${path.replace(/^\/+/, "")}`;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -175,7 +191,7 @@ revised letter.`
         : ""
     }CURRENT LETTER DRAFT\n${letter.letter_content}\n\nINSTRUCTIONS\n${instructions}\n\nReturn only the revised letter.`;
 
-    const gptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+    const gptResponse = await fetch(openAiUrl("chat/completions"), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,

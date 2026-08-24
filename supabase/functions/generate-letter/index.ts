@@ -77,6 +77,22 @@ function contentTypeFor(path: string): string {
   return CONTENT_TYPE_MAP[ext] || "audio/webm";
 }
 
+
+// ---------------------------------------------------------------------------
+// OpenAI endpoint base.
+//
+// Data residency: OpenAI serves EU-resident projects from a regional hostname.
+// Keeping the base URL in an env var means switching NoteMD onto an EU-resident
+// OpenAI project is a configuration change, not a redeploy of application code.
+// Defaults to the global endpoint so behaviour is unchanged until it is set.
+//
+//   OPENAI_API_BASE=https://eu.api.openai.com/v1
+// ---------------------------------------------------------------------------
+function openAiUrl(path: string): string {
+  const base = (Deno.env.get("OPENAI_API_BASE") || "https://api.openai.com/v1").replace(/\/+$/, "");
+  return `${base}/${path.replace(/^\/+/, "")}`;
+}
+
 // ---------------------------------------------------------------------------
 // OpenAI transcription (primary "accurate" engine).
 //
@@ -123,7 +139,7 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
   // temperature 0 = deterministic; avoids the model "smoothing" clinical detail.
   form.append("temperature", "0");
 
-  const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+  const resp = await fetch(openAiUrl("audio/transcriptions"), {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
     body: form,
@@ -803,7 +819,7 @@ The clinician remains entirely responsible for clinical content. Your role is do
       ? `Please correct and enhance the following dictated note into a structured professional clinical document.\n\n[TRANSCRIPT]\n${transcript}`
       : `Please convert the following consultation transcript into a comprehensive consultant-level clinical letter using the template above. Include all clinically relevant information and preserve chronology wherever possible.\n\n[TRANSCRIPT]\n${transcript}`;
 
-    const gptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+    const gptResponse = await fetch(openAiUrl("chat/completions"), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,

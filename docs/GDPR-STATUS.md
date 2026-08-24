@@ -47,6 +47,43 @@ require that pending sign-off.
 These are **necessary but not sufficient**. They do not by themselves make the
 product compliant.
 
+
+---
+
+## 2a. Data residency
+
+UK GDPR treats the EEA as adequate, so EU storage satisfies a UK residency
+requirement — it does not have to be London specifically. Confirm with the
+individual trust if any of them mandate UK-only rather than UK/EEA.
+
+| Component | What it holds | Region | Status |
+|---|---|---|---|
+| Supabase (Postgres + storage) | **All patient data at rest** — transcripts, letters, patient identifiers, audio | `eu-west-1` (Ireland) | **EU — compliant** |
+| Supabase edge functions | Transient processing only, no persistence | Co-located with project | EU |
+| OpenAI | Audio + transcripts in transit; retained up to 30 days unless ZDR granted | Global by default | **Action: move to an EU-resident project** |
+| Deepgram | Consultation/fast-engine audio in transit | Global by default | Action, or remove entirely (see below) |
+| Resend | Letters and transcripts sent by email | Check account region | Action: switch to EU region |
+| Render | Static frontend bundle only — **no patient data at rest** | Check service region | Low priority; move for tidiness |
+| MedASR (Cloud Run) | Fallback engine only, currently unused | Check deployment region | Redeploy to `europe-west2` if retained |
+
+**The important line in that table is the first one:** the database and audio
+storage — everything that actually persists — are already in the EU. The
+remaining items are processors that receive data *in transit*.
+
+### Reducing the residency surface
+Deepgram now serves only the "Fast" dictation engine and live consultation
+transcription. Since OpenAI is the accurate engine and has been validated by the
+client, removing Deepgram would eliminate one processor from the DPIA, one DPA
+to evidence, and one region to arrange. The trade-off is losing the word-by-word
+live transcript during consultations, as OpenAI works in ~10 second segments.
+This is a product decision, not a technical constraint.
+
+### Implementation note
+`OPENAI_API_BASE` makes the OpenAI endpoint configurable, so moving to an
+EU-resident OpenAI project is an environment variable change rather than a code
+change. Set it alongside the Zero Data Retention application (§3.2) — both are
+arranged through the same OpenAI account conversation.
+
 ---
 
 ## 3. Outstanding items before processing real patient data
