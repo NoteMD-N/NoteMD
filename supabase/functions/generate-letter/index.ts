@@ -4,6 +4,7 @@ import {
   resolveProvider,
   shouldServerTranscribe,
   resolveTemplateSelection,
+  streamingHttpUrl,
 } from "../_shared/transcription-policy.ts";
 
 const corsHeaders = {
@@ -209,7 +210,7 @@ async function transcribeConsultation(audioBlob: Blob, audioPath: string): Promi
     punctuate: "true",
     paragraphs: "true",
   });
-  const resp = await fetch(`https://api.deepgram.com/v1/listen?${params}`, {
+  const resp = await fetch(`${streamingHttpUrl(Deno.env.get("DEEPGRAM_API_BASE"))}?${params}`, {
     method: "POST",
     headers: {
       Authorization: `Token ${DEEPGRAM_API_KEY}`,

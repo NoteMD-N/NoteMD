@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { streamingWsUrl, isEuResidentStreamingHost } from "../_shared/transcription-policy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -41,8 +42,23 @@ serve(async (req) => {
       throw new Error("DEEPGRAM_API_KEY is not configured");
     }
 
+    // Return the endpoint alongside the key so the browser never hardcodes a
+    // region. Changing DEEPGRAM_API_BASE repoints real-time transcription
+    // without a frontend rebuild, and keeps one source of truth for residency.
+    const configuredBase = Deno.env.get("DEEPGRAM_API_BASE");
+    const wsUrl = streamingWsUrl(configuredBase);
+
+    if (!isEuResidentStreamingHost(configuredBase)) {
+      // Loud, because this means patient audio is leaving EU infrastructure.
+      console.warn(
+        "[deepgram-token] NON-EU streaming endpoint in use:",
+        wsUrl,
+        "- set DEEPGRAM_API_BASE=https://api.eu.deepgram.com for EU residency",
+      );
+    }
+
     return new Response(
-      JSON.stringify({ key: DEEPGRAM_API_KEY }),
+      JSON.stringify({ key: DEEPGRAM_API_KEY, ws_url: wsUrl }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {

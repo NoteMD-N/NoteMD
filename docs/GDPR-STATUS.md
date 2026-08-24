@@ -61,7 +61,7 @@ individual trust if any of them mandate UK-only rather than UK/EEA.
 | Supabase (Postgres + storage) | **All patient data at rest** — transcripts, letters, patient identifiers, audio | `eu-west-1` (Ireland) | **EU — compliant** |
 | Supabase edge functions | Transient processing only, no persistence | Co-located with project | EU |
 | OpenAI | Audio + transcripts in transit; retained up to 30 days unless ZDR granted | Global by default | **Action: move to an EU-resident project** |
-| Deepgram | Consultation/fast-engine audio in transit | Global by default | Action, or remove entirely (see below) |
+| Deepgram | Consultation/standard-engine audio in transit | **`api.eu.deepgram.com` → eu-central-1 (Frankfurt)** | **EU — configured** (verify account is EU-provisioned) |
 | Resend | Letters and transcripts sent by email | Check account region | Action: switch to EU region |
 | Render | Static frontend bundle only — **no patient data at rest** | Check service region | Low priority; no PHI at rest there |
 | MedASR (Cloud Run) | Fallback engine only, currently unused | **`us-east4` (Virginia)**, image in `us-central1` (Iowa) | **Action: redeploy to EU, or delete** — see `medasr-service/deploy-eu.sh` |
@@ -70,13 +70,20 @@ individual trust if any of them mandate UK-only rather than UK/EEA.
 storage — everything that actually persists — are already in the EU. The
 remaining items are processors that receive data *in transit*.
 
-### Reducing the residency surface
-Deepgram now serves only the "Fast" dictation engine and live consultation
-transcription. Since OpenAI is the accurate engine and has been validated by the
-client, removing Deepgram would eliminate one processor from the DPIA, one DPA
-to evidence, and one region to arrange. The trade-off is losing the word-by-word
-live transcript during consultations, as OpenAI works in ~10 second segments.
-This is a product decision, not a technical constraint.
+### Streaming engine residency
+The streaming provider is now pinned to its EU endpoint
+(`api.eu.deepgram.com`, which resolves to eu-central-1 / Frankfurt) rather than
+the global endpoint (which resolves to Sacramento, California).
+
+The endpoint is returned to the browser by the `deepgram-token` function rather
+than compiled into the frontend, so the region is server-controlled and can be
+changed without a frontend rebuild. `resolveStreamingHost()` fails safe to the
+EU host if the setting is missing or malformed, and the token function logs a
+warning if a non-EU endpoint is ever configured.
+
+**Verify with the vendor** that the account is provisioned for EU processing —
+a regional endpoint does not by itself guarantee the account is enabled for it,
+and requests may be rejected if it is not.
 
 ### Implementation note
 `OPENAI_API_BASE` makes the OpenAI endpoint configurable, so moving to an

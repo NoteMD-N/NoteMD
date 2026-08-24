@@ -216,6 +216,9 @@ const Record = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const deepgramKeyRef = useRef<string | null>(null);
+  // Real-time endpoint, supplied by the token function so the region is
+  // server-controlled and changing it needs no frontend rebuild.
+  const streamEndpointRef = useRef<string | null>(null);
   const modeRef = useRef<RecordMode>(mode);
   // Mirror of useMedicalDictation for use inside stable event handlers whose
   // effects only run once (window online listener, etc).
@@ -525,6 +528,7 @@ const Record = () => {
         const { data, error } = await supabase.functions.invoke("deepgram-token");
         if (!error && data?.key) {
           deepgramKeyRef.current = data.key;
+          if (data.ws_url) streamEndpointRef.current = data.ws_url;
           setDeepgramReady(true);
         }
       } catch (e) {
@@ -659,6 +663,7 @@ const Record = () => {
       if (error || !data?.key) throw new Error(error?.message || "Could not start the transcription service");
       key = data.key;
       deepgramKeyRef.current = key;
+      if (data.ws_url) streamEndpointRef.current = data.ws_url;
     }
 
     const params = new URLSearchParams({
@@ -671,10 +676,11 @@ const Record = () => {
       vad_events: "true",
     });
 
-    const ws = new WebSocket(
-      `wss://api.deepgram.com/v1/listen?${params}`,
-      ["token", key!]
-    );
+    // Endpoint comes from the server (EU-resident by default). The literal
+    // below is only a last-resort fallback if the token response predates this
+    // field; it points at the same EU host so residency is preserved either way.
+    const endpoint = streamEndpointRef.current || "wss://api.eu.deepgram.com/v1/listen";
+    const ws = new WebSocket(`${endpoint}?${params}`, ["token", key!]);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {

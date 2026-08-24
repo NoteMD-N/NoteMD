@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveProvider, providerTier } from "../_shared/transcription-policy.ts";
+import { resolveProvider, providerTier, streamingHttpUrl } from "../_shared/transcription-policy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -197,7 +197,7 @@ async function transcribeStreaming(audioBlob: Blob, audioPath: string): Promise<
     punctuate: "true",
     paragraphs: "true",
   });
-  const resp = await fetch(`https://api.deepgram.com/v1/listen?${params}`, {
+  const resp = await fetch(`${streamingHttpUrl(Deno.env.get("DEEPGRAM_API_BASE"))}?${params}`, {
     method: "POST",
     headers: {
       Authorization: `Token ${DEEPGRAM_API_KEY}`,

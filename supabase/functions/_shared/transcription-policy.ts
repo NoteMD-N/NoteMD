@@ -137,3 +137,50 @@ export const OPENAI_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export function isTranscribableSize(bytes: number): boolean {
   return bytes > 0 && bytes <= OPENAI_MAX_UPLOAD_BYTES;
 }
+
+// ---------------------------------------------------------------------------
+// Streaming-provider endpoint (data residency).
+//
+// The streaming vendor runs regional endpoints. The default host resolves to
+// Sacramento, California; the EU host resolves to eu-central-1 (Frankfurt).
+// Patient audio must stay on EU infrastructure, so EU is the default here and
+// the value is overridable by env for support/diagnostics.
+//
+//   DEEPGRAM_API_BASE=https://api.eu.deepgram.com   (default)
+//   DEEPGRAM_API_BASE=https://api.deepgram.com      (global - NOT EU-resident)
+// ---------------------------------------------------------------------------
+export const STREAMING_EU_HOST = "api.eu.deepgram.com";
+export const STREAMING_GLOBAL_HOST = "api.deepgram.com";
+
+/**
+ * Normalise a configured base into a bare host.
+ *
+ * Accepts a full URL, a scheme-less host, or an empty/missing value, so a
+ * mis-set environment variable degrades to the EU host rather than producing a
+ * malformed URL that fails at connection time.
+ */
+export function resolveStreamingHost(configured?: string | null): string {
+  const raw = (configured || "").trim();
+  if (!raw) return STREAMING_EU_HOST;
+
+  // Strip scheme and any path, then drop a trailing slash.
+  const withoutScheme = raw.replace(/^[a-z]+:\/\//i, "");
+  const host = withoutScheme.split("/")[0].trim();
+
+  return host || STREAMING_EU_HOST;
+}
+
+/** HTTPS base for the pre-recorded/batch endpoint. */
+export function streamingHttpUrl(configured: string | null | undefined, path = "v1/listen"): string {
+  return `https://${resolveStreamingHost(configured)}/${path.replace(/^\/+/, "")}`;
+}
+
+/** WSS base for the real-time endpoint. */
+export function streamingWsUrl(configured: string | null | undefined, path = "v1/listen"): string {
+  return `wss://${resolveStreamingHost(configured)}/${path.replace(/^\/+/, "")}`;
+}
+
+/** True when the configured host is the EU-resident one. */
+export function isEuResidentStreamingHost(configured?: string | null): boolean {
+  return resolveStreamingHost(configured) === STREAMING_EU_HOST;
+}
