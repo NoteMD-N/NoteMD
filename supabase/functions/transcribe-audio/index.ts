@@ -264,13 +264,16 @@ serve(async (req) => {
       ? await transcribeMedical(audioData, audio_path)
       : await transcribeStreaming(audioData, audio_path);
 
-    // `provider` is reported back so the UI can show the clinician which engine
-    // actually produced the text they are looking at.
+    // The specific vendor is deliberately NOT returned to the client — the
+    // transcription engine is proprietary and should not be discoverable from
+    // the browser. It is logged server-side so support can still diagnose
+    // which path ran.
+    console.log(`[transcribe-audio] provider=${provider} chars=${transcript.length}`);
+
     return new Response(
       JSON.stringify({
         transcript,
         engine: providerTier(provider),
-        provider,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

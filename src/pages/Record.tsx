@@ -65,13 +65,6 @@ type ConnectionQuality = "good" | "fair" | "poor" | "offline";
 type Stage = "record" | "review";
 type StreamHealth = "connected" | "reconnecting" | "disconnected";
 
-// Human-readable names for the transcription engines, shown as a badge so the
-// clinician can always see which engine produced the transcript in front of them.
-const PROVIDER_LABELS: Record<string, string> = {
-  openai: "OpenAI",
-  deepgram: "Deepgram",
-  medasr: "MedASR",
-};
 
 type Template = {
   id: string;
@@ -110,10 +103,6 @@ const Record = () => {
   // Stop rather than streaming a Deepgram draft that later gets replaced.
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
-  // Which engine actually produced the text currently on screen. Reported by
-  // the transcribe-audio function rather than inferred, so the badge in the
-  // transcript panel is evidence, not a guess.
-  const [transcriptProvider, setTranscriptProvider] = useState<string | null>(null);
 
   // Fetch templates
   const { data: templates = [] } = useQuery({
@@ -130,25 +119,36 @@ const Record = () => {
     },
   });
 
-  // Fetch the user's "skip review for dictation" preference
-  const { data: userPref } = useQuery({
+  // Fetch the user's dictation preferences. Every return path yields the same
+  // shape so a partially-populated object can't silently change which engine
+  // is selected.
+  type DictationPrefs = {
+    skip_dictation_review: boolean;
+    dictation_engine: "fast" | "accurate";
+  };
+  const DEFAULT_PREFS: DictationPrefs = {
+    skip_dictation_review: false,
+    dictation_engine: "accurate",
+  };
+  const { data: userPref } = useQuery<DictationPrefs>({
     queryKey: ["user-record-pref"],
     queryFn: async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return { skip_dictation_review: false };
+      if (!user) return DEFAULT_PREFS;
       const { data } = await supabase
         .from("profiles")
         .select("skip_dictation_review, dictation_engine")
         .eq("user_id", user.id)
         .maybeSingle();
+      const engine = (data as any)?.dictation_engine;
       return {
         skip_dictation_review: !!(data as any)?.skip_dictation_review,
-        dictation_engine: ((data as any)?.dictation_engine as "fast" | "accurate") ?? "accurate",
+        dictation_engine: engine === "fast" || engine === "accurate" ? engine : "accurate",
       };
     },
   });
-  const skipDictationReview = userPref?.skip_dictation_review ?? false;
-  const dictationEngine = userPref?.dictation_engine ?? "accurate";
+  const skipDictationReview = userPref?.skip_dictation_review ?? DEFAULT_PREFS.skip_dictation_review;
+  const dictationEngine = userPref?.dictation_engine ?? DEFAULT_PREFS.dictation_engine;
 
   // Persist the dictation engine right from the Record page — the previous UX
   // forced users to jump into Settings to change it. The mutation invalidates
@@ -528,7 +528,7 @@ const Record = () => {
           setDeepgramReady(true);
         }
       } catch (e) {
-        console.error("Failed to pre-warm Deepgram token", e);
+        console.error("[transcription] token pre-warm failed", e);
       }
     })();
   }, [useMedicalDictation]);
@@ -619,7 +619,6 @@ const Record = () => {
           if (!text) return;
 
           if (msg.is_final) {
-            setTranscriptProvider("deepgram");
             // Append to whatever is currently on screen so user edits during recording are preserved
             setTranscript((prev) => {
               const next = prev + (prev ? " " : "") + text;
@@ -657,7 +656,7 @@ const Record = () => {
     let key = opts?.forceFreshToken ? null : deepgramKeyRef.current;
     if (!key) {
       const { data, error } = await supabase.functions.invoke("deepgram-token");
-      if (error || !data?.key) throw new Error(error?.message || "Failed to get Deepgram token");
+      if (error || !data?.key) throw new Error(error?.message || "Could not start the transcription service");
       key = data.key;
       deepgramKeyRef.current = key;
     }
@@ -679,7 +678,7 @@ const Record = () => {
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error("Deepgram connection timed out"));
+        reject(new Error("Transcription service timed out. Check your connection and try again."));
       }, 10000);
 
       ws.onopen = () => {
@@ -692,7 +691,7 @@ const Record = () => {
       ws.onerror = (e) => {
         clearTimeout(timeout);
         console.error("[Transcription] Connection error:", e);
-        reject(new Error("Deepgram connection failed"));
+        reject(new Error("Could not connect to the transcription service"));
       };
     });
   }, []);
@@ -815,8 +814,7 @@ const Record = () => {
       setTranscript("");
       setInterimText("");
       transcriptRef.current = "";
-      setTranscriptProvider(null);
-      elapsedBeforePauseRef.current = 0;
+        elapsedBeforePauseRef.current = 0;
       pendingChunksRef.current = [];
       reconnectAttemptRef.current = 0;
       isStoppingRef.current = false;
@@ -825,13 +823,24 @@ const Record = () => {
       setBufferedSeconds(0);
       setStreamHealth("connected");
 
-      // For accurate dictation we intentionally skip the live streaming provider —
-      // the audio will be transcribed after Stop with the medical engine so the
-      // user only ever sees one transcript. For everything else we open the WS
-      // and mic in parallel for the fastest start.
+      // Read through the ref, NOT the closure variable.
+      //
+      // startRecording is memoised and `mode` is not one of its dependencies,
+      // so the closure captures whichever value useMedicalDictation had when
+      // the callback was created — false, because the page opens in
+      // consultation mode. Switching to Dictation did not recreate the
+      // callback, so the streaming engine was opened for every recording
+      // regardless of the selected module. The ref is updated by an effect on
+      // every render and is always current.
+      const medicalDictation = useMedicalDictationRef.current;
+
+      // For the enhanced engine we intentionally skip the live streaming
+      // provider — audio is transcribed in ~10s segments instead, so the user
+      // only ever sees one transcript. Otherwise open the socket and mic in
+      // parallel for the fastest start.
       let ws: WebSocket | null = null;
       let stream: MediaStream;
-      if (useMedicalDictation) {
+      if (medicalDictation) {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } else {
         const [w, s] = await Promise.all([
@@ -870,7 +879,7 @@ const Record = () => {
           try {
             currentWs.send(e.data);
           } catch (err) {
-            console.error("[Transcription] Send failed, buffering:", err);
+            console.error("[transcription] send failed, buffering:", err);
             pendingChunksRef.current.push(e.data);
             setBufferedSeconds((s) => s + 0.25);
           }
@@ -895,7 +904,7 @@ const Record = () => {
       // fresh, self-contained webm segment every 10s. Each segment is
       // uploaded and run through MedASR, and the returned text is appended
       // to the on-screen transcript so the clinician can review as they go.
-      if (useMedicalDictation) {
+      if (medicalDictation) {
         try {
           segmentChunksRef.current = [];
           const segRecorder = new MediaRecorder(stream, { mimeType });
@@ -1141,7 +1150,6 @@ const Record = () => {
       transcriptRef.current = text;
       setTranscript(text);
       setEditableTranscript(text);
-      if (data?.provider) setTranscriptProvider(data.provider as string);
       medicalUploadPathRef.current = fileName;
       return { text, audio_path: fileName };
     } catch (err: any) {
@@ -1182,7 +1190,6 @@ const Record = () => {
       }
       const text = ((data?.transcript || "") as string).trim();
       if (!text) return;
-      if (data?.provider) setTranscriptProvider(data.provider as string);
       setTranscript((prev) => {
         const next = prev ? `${prev} ${text}` : text;
         transcriptRef.current = next;
@@ -1630,7 +1637,6 @@ const Record = () => {
     setStage("record");
     medicalUploadPathRef.current = null;
     setTranscribeError(null);
-    setTranscriptProvider(null);
     clearRecovery();
   };
 
@@ -1808,9 +1814,9 @@ const Record = () => {
                       : "border-border hover:border-border/80"
                   } ${!canToggleMode ? "opacity-60 cursor-not-allowed" : ""}`}
                 >
-                  <p className="font-medium text-sm text-slate-900 dark:text-slate-100">Fast (live)</p>
+                  <p className="font-medium text-sm text-slate-900 dark:text-slate-100">Standard</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Deepgram live transcript. Fastest, slightly lower accuracy.
+                    Live word-by-word transcript. Fastest, slightly lower accuracy.
                   </p>
                 </button>
                 <button
@@ -1823,9 +1829,9 @@ const Record = () => {
                       : "border-border hover:border-border/80"
                   } ${!canToggleMode ? "opacity-60 cursor-not-allowed" : ""}`}
                 >
-                  <p className="font-medium text-sm text-slate-900 dark:text-slate-100">Accurate (OpenAI)</p>
+                  <p className="font-medium text-sm text-slate-900 dark:text-slate-100">Enhanced</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    OpenAI transcription, tuned for UK clinical vocabulary. Updates every ~10s while you dictate.
+                    Highest accuracy for clinical terminology. Transcript updates every ~10 seconds as you dictate.
                   </p>
                 </button>
               </div>
@@ -2173,26 +2179,9 @@ const Record = () => {
             {/* Right panel — Live transcript */}
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)] flex flex-col min-h-[640px]">
               <div className="px-6 py-4 border-b border-border/60 flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    {useMedicalDictation ? "Transcript" : "Live Transcript"}
-                  </h3>
-                  {/* Evidence of which engine produced the text on screen. The
-                      value comes back from the server, so it can't drift from
-                      what actually ran. */}
-                  {transcriptProvider && (
-                    <span
-                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                        transcriptProvider === "openai"
-                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
-                          : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                      }`}
-                      title={`This transcript was produced by ${PROVIDER_LABELS[transcriptProvider] || transcriptProvider}`}
-                    >
-                      {PROVIDER_LABELS[transcriptProvider] || transcriptProvider}
-                    </span>
-                  )}
-                </div>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {useMedicalDictation ? "Transcript" : "Live Transcript"}
+                </h3>
                 {isRecording && !isPaused && streamHealth === "connected" && !useMedicalDictation && (
                   <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
                     <span className="relative flex h-2 w-2">
@@ -2214,7 +2203,7 @@ const Record = () => {
                 {isTranscribing && (
                   <span className="flex items-center gap-1.5 text-xs text-primary">
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    Transcribing with medical engine...
+                    Transcribing…
                   </span>
                 )}
                 {isRecording && streamHealth === "reconnecting" && (
@@ -2243,11 +2232,11 @@ const Record = () => {
                       <Stethoscope className="h-3.5 w-3.5 mt-0.5 text-primary flex-shrink-0" />
                       <div>
                         <div className="font-medium text-slate-900 dark:text-slate-100 mb-0.5">
-                          Accurate dictation module
+                          Enhanced dictation
                         </div>
-                        The medical-domain engine transcribes as you speak, in
-                        ~10 second segments. The first block of text should
-                        appear about 10–15 seconds after you start dictating.
+                        Your transcript is built in ~10 second segments as you speak. The
+                        first block of text should appear about 10–15 seconds
+                        after you start dictating.
                       </div>
                     </div>
                   </div>
