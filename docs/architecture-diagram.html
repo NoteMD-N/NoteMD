@@ -1,0 +1,460 @@
+<title>NoteMD Data Flow Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  /* ---- Light palette (complete, on bare :root) ---- */
+  :root {
+    --ground:        #F7F9FB;
+    --surface:       #FFFFFF;
+    --surface-sunk:  #EEF3F7;
+    --ink:           #12212E;
+    --ink-soft:      #4A5C6E;
+    --ink-faint:     #7C8C9C;
+    --rule:          #DCE5EC;
+    --rule-strong:   #C3D1DC;
+
+    --accent:        #0C7D72;
+    --accent-bg:     #E3F4F1;
+    --navy:          #14315C;
+
+    --ok:            #1B7F4D;
+    --ok-bg:         #E4F3EA;
+    --warn:          #A66A00;
+    --warn-bg:       #FBF0DC;
+    --risk:          #B3392E;
+    --risk-bg:       #FBE9E7;
+    --ext:           #5B6472;
+    --ext-bg:        #EAEDF1;
+
+    --shadow:        0 1px 2px rgba(18,33,46,.06), 0 8px 24px -18px rgba(18,33,46,.35);
+  }
+
+  /* ---- Dark: system default (nothing stamped) ---- */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:        #0E1419;
+      --surface:       #151D25;
+      --surface-sunk:  #1B242E;
+      --ink:           #E6EDF3;
+      --ink-soft:      #A3B2C0;
+      --ink-faint:     #74869A;
+      --rule:          #26323D;
+      --rule-strong:   #35434F;
+
+      --accent:        #4FD6C5;
+      --accent-bg:     #0F2E2B;
+      --navy:          #9FB8DC;
+
+      --ok:            #5FCB8C;
+      --ok-bg:         #10281B;
+      --warn:          #E0A94A;
+      --warn-bg:       #2C2210;
+      --risk:          #F08578;
+      --risk-bg:       #2E1614;
+      --ext:           #9AA6B4;
+      --ext-bg:        #202832;
+
+      --shadow:        0 1px 2px rgba(0,0,0,.5), 0 8px 24px -18px rgba(0,0,0,.8);
+    }
+  }
+
+  /* ---- Dark: explicitly chosen ---- */
+  :root[data-theme="dark"] {
+    --ground:        #0E1419;
+    --surface:       #151D25;
+    --surface-sunk:  #1B242E;
+    --ink:           #E6EDF3;
+    --ink-soft:      #A3B2C0;
+    --ink-faint:     #74869A;
+    --rule:          #26323D;
+    --rule-strong:   #35434F;
+
+    --accent:        #4FD6C5;
+    --accent-bg:     #0F2E2B;
+    --navy:          #9FB8DC;
+
+    --ok:            #5FCB8C;
+    --ok-bg:         #10281B;
+    --warn:          #E0A94A;
+    --warn-bg:       #2C2210;
+    --risk:          #F08578;
+    --risk-bg:       #2E1614;
+    --ext:           #9AA6B4;
+    --ext-bg:        #202832;
+
+    --shadow:        0 1px 2px rgba(0,0,0,.5), 0 8px 24px -18px rgba(0,0,0,.8);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 48px 24px 96px; }
+
+  /* ---- Header ---- */
+  .masthead { border-bottom: 2px solid var(--ink); padding-bottom: 20px; margin-bottom: 8px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 12px;
+  }
+  h1 {
+    font-size: clamp(30px, 4.6vw, 46px); font-weight: 700; letter-spacing: -.025em;
+    line-height: 1.08; margin: 0 0 12px; text-wrap: balance;
+  }
+  .standfirst { font-size: 18px; color: var(--ink-soft); margin: 0; max-width: 62ch; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 16px 0 0;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; color: var(--ink-faint);
+  }
+  .meta b { color: var(--ink-soft); font-weight: 500; }
+
+  /* ---- Sections ---- */
+  section { margin-top: 56px; }
+  h2 {
+    font-size: 13px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-faint); margin: 0 0 6px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  .h2sub { font-size: 26px; font-weight: 600; letter-spacing: -.018em; margin: 0 0 20px; text-wrap: balance; }
+  p { margin: 0 0 14px; max-width: 68ch; }
+
+  /* ---- Status legend ---- */
+  .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+  .legend div {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 12px 14px; font-size: 13.5px; color: var(--ink-soft);
+  }
+  .legend b { display: block; color: var(--ink); font-size: 14px; margin-bottom: 2px; }
+
+  /* ---- Badges ---- */
+  .b {
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: .04em;
+    padding: 3px 8px; border-radius: 5px; border: 1px solid transparent;
+  }
+  .b-ok   { color: var(--ok);   background: var(--ok-bg);   border-color: color-mix(in srgb, var(--ok) 26%, transparent); }
+  .b-warn { color: var(--warn); background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 26%, transparent); }
+  .b-risk { color: var(--risk); background: var(--risk-bg); border-color: color-mix(in srgb, var(--risk) 26%, transparent); }
+  .b-ext  { color: var(--ext);  background: var(--ext-bg);  border-color: color-mix(in srgb, var(--ext) 26%, transparent); }
+
+  /* ---- The residency diagram ---- */
+  .diagram { margin-top: 8px; }
+  .zone {
+    border: 2px solid var(--ok); border-radius: 14px; padding: 18px 18px 22px;
+    background: color-mix(in srgb, var(--ok-bg) 55%, var(--surface));
+    position: relative;
+  }
+  .zone-label {
+    position: absolute; top: -11px; left: 18px;
+    background: var(--ground); padding: 0 10px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ok);
+  }
+  .zone-out {
+    border: 2px dashed var(--risk);
+    background: color-mix(in srgb, var(--risk-bg) 45%, var(--surface));
+    margin-top: 30px;
+  }
+  .zone-out .zone-label { color: var(--risk); }
+
+  .flow { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .node {
+    background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 9px;
+    padding: 11px 14px; flex: 1 1 210px; min-width: 0; box-shadow: var(--shadow);
+  }
+  .node .n-name { font-weight: 600; font-size: 14.5px; display: block; margin-bottom: 3px; }
+  .node .n-meta {
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px;
+    color: var(--ink-faint); display: block; word-break: break-all;
+  }
+  .node .n-data { font-size: 12.5px; color: var(--ink-soft); margin-top: 6px; display: block; }
+  .arrow {
+    text-align: center; color: var(--ink-faint); font-size: 15px; line-height: 1;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  .crossing {
+    display: flex; align-items: center; gap: 10px; justify-content: center;
+    margin: 4px 0 0; padding: 10px 14px;
+    border-radius: 8px; background: var(--risk-bg);
+    color: var(--risk); font-size: 13.5px; font-weight: 600;
+    border: 1px solid color-mix(in srgb, var(--risk) 28%, transparent);
+  }
+
+  /* ---- Tables ---- */
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 620px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--ink-faint); background: var(--surface-sunk); white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  td code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px;
+    color: var(--ink-soft); font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- Action list ---- */
+  .actions { display: grid; gap: 10px; }
+  .act {
+    display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: start;
+    background: var(--surface); border: 1px solid var(--rule);
+    border-left: 3px solid var(--rule-strong);
+    border-radius: 8px; padding: 13px 16px;
+  }
+  .act.p1 { border-left-color: var(--risk); }
+  .act.p2 { border-left-color: var(--warn); }
+  .act .num {
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
+    color: var(--ink-faint); font-weight: 600; padding-top: 2px; font-variant-numeric: tabular-nums;
+  }
+  .act .t { font-weight: 600; font-size: 14.5px; display: block; margin-bottom: 2px; }
+  .act .d { font-size: 13.5px; color: var(--ink-soft); }
+
+  .callout {
+    background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 10px; padding: 16px 18px; margin: 0 0 20px;
+  }
+  .callout p { margin: 0; color: var(--ink); max-width: none; }
+  .callout strong { color: var(--accent); }
+
+  footer {
+    margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--rule);
+    font-size: 13px; color: var(--ink-faint); max-width: 68ch;
+  }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 32px 16px 64px; }
+    .node { flex-basis: 100%; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Technical evidence · DPIA / DSPT / DTAC</p>
+    <h1>NoteMD Data Flow Map</h1>
+    <p class="standfirst">Where clinical data is processed, which third parties receive it, and the one path by which it currently leaves the EEA.</p>
+    <div class="meta">
+      <span><b>Prepared</b> 26 Aug 2026</span>
+      <span><b>Scope</b> Production configuration as committed</span>
+      <span><b>Basis</b> Code audit, not penetration test</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Status key</h2>
+    <div class="legend">
+      <div><b>A · Implemented &amp; tested</b>Verified in code and covered by automated tests.</div>
+      <div><b>B · Needs verification</b>Implemented; confirm against the live dashboard.</div>
+      <div><b>C · Not implemented</b>Development work required.</div>
+      <div><b>D · Client / provider action</b>Cannot be resolved in code.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>01 — Data flow</h2>
+    <p class="h2sub">Everything at rest is in the EU. One hop is not.</p>
+    <div class="callout">
+      <p><strong>The headline for the DPIA:</strong> the database, audio storage, authentication and real-time transcription all sit inside the EEA. Transcripts and patient identifiers are sent to OpenAI, which is currently served globally — this is the sole route by which patient data leaves the EEA, and it closes when the EU-resident OpenAI project is enabled.</p>
+    </div>
+
+    <div class="diagram">
+      <div class="zone">
+        <span class="zone-label">Inside the EEA</span>
+        <div class="flow">
+          <div class="row">
+            <div class="node">
+              <span class="n-name">Clinician browser</span>
+              <span class="n-meta">React SPA · served by Render</span>
+              <span class="n-data">Microphone capture held in memory. Transcript cached locally, namespaced per user, purged at sign-out.</span>
+            </div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="row">
+            <div class="node">
+              <span class="n-name">Authentication</span>
+              <span class="n-meta">Supabase Auth · eu-west-1</span>
+              <span class="n-data">Email, password hash, JWT session.</span>
+            </div>
+            <div class="node">
+              <span class="n-name">Edge functions</span>
+              <span class="n-meta">Supabase Deno · eu-west-1</span>
+              <span class="n-data">11 functions. Processing only — nothing persisted here.</span>
+            </div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="row">
+            <div class="node">
+              <span class="n-name">Real-time transcription</span>
+              <span class="n-meta">wss://api.eu.deepgram.com · eu-central-1</span>
+              <span class="n-data">Consultation audio, streamed direct from browser. No patient identifiers. <span class="b b-ok">A — verified 24 Aug</span></span>
+            </div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="row">
+            <div class="node">
+              <span class="n-name">Database</span>
+              <span class="n-meta">Postgres · eu-west-1</span>
+              <span class="n-data">Transcripts, letters, patient identifiers. RLS on every table.</span>
+            </div>
+            <div class="node">
+              <span class="n-name">Audio storage</span>
+              <span class="n-meta">Supabase Storage · eu-west-1</span>
+              <span class="n-data">Private bucket, per-user prefix. Auto-purged after 30 days.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="crossing">⚠ Transcript + patient identifiers cross the EEA boundary</div>
+
+      <div class="zone zone-out">
+        <span class="zone-label">Outside the EEA</span>
+        <div class="flow">
+          <div class="row">
+            <div class="node">
+              <span class="n-name">OpenAI</span>
+              <span class="n-meta">api.openai.com · global</span>
+              <span class="n-data">Dictation audio, transcripts, patient name and NHS number, template prompts. Retained up to 30 days unless Zero Data Retention is enabled. Not used for training. <span class="b b-risk">D — EU project + ZDR</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>02 — Third parties</h2>
+    <p class="h2sub">Every service that receives data</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Service</th><th>Purpose</th><th>Patient data?</th><th>Region</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>Supabase</b></td><td>Database, storage, auth, functions</td><td>Yes — all of it</td><td><code>eu-west-1</code> Ireland</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td><b>Deepgram</b></td><td>Real-time transcription</td><td>Audio only</td><td><code>eu-central-1</code> Frankfurt</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td><b>OpenAI</b></td><td>Transcription + letter generation</td><td>Yes — audio, transcripts, identifiers</td><td>Global</td><td><span class="b b-risk">D</span></td></tr>
+          <tr><td><b>Resend</b></td><td>Email delivery</td><td>Yes — letters, transcripts</td><td>Unconfirmed</td><td><span class="b b-warn">D</span></td></tr>
+          <tr><td><b>Render</b></td><td>Static frontend hosting</td><td><b>No</b> — bundle only</td><td>Unconfirmed</td><td><span class="b b-warn">B</span></td></tr>
+          <tr><td><b>Stripe</b></td><td>Billing</td><td><b>No</b> — clinician + payment only</td><td>Global</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td><b>Google Cloud Run</b></td><td>Legacy ASR — <b>not in use</b></td><td>No — receives no traffic</td><td><code>us-east4</code> Virginia</td><td><span class="b b-warn">C — delete</span></td></tr>
+          <tr><td><b>Hugging Face</b></td><td>Model weights for the legacy service</td><td><b>No</b> — never has</td><td>n/a</td><td><span class="b b-ok">Not in data path</span></td></tr>
+          <tr><td><b>Google Fonts</b></td><td>Web fonts</td><td>No — but receives clinician IPs</td><td>US</td><td><span class="b b-warn">C — self-host</span></td></tr>
+          <tr><td><b>Analytics / telemetry</b></td><td>—</td><td>—</td><td>—</td><td><span class="b b-ok">None present</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>03 — Retention</h2>
+    <p class="h2sub">What is kept, and for how long</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Data</th><th>Location</th><th>Retention</th><th>Deletion</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Patient audio</td><td>Supabase Storage, private</td><td><b>30 days</b>, configurable</td><td>Automatic nightly purge <span class="b b-ok">A</span></td></tr>
+          <tr><td>Transcripts</td><td>Postgres</td><td>10 years (NHS default)</td><td>On request <span class="b b-ok">A</span></td></tr>
+          <tr><td>Generated letters</td><td>Postgres</td><td>10 years (NHS default)</td><td>On request <span class="b b-ok">A</span></td></tr>
+          <tr><td>Patient identifiers</td><td>Postgres</td><td>With parent record</td><td>Cascade <span class="b b-ok">A</span></td></tr>
+          <tr><td>Browser cache of transcript</td><td>Clinician device</td><td>24 hours max</td><td>Purged at sign-out <span class="b b-ok">A</span></td></tr>
+          <tr><td>Audit log</td><td>Postgres, append-only</td><td>Indefinite, by design</td><td>Retained for accountability <span class="b b-ok">A</span></td></tr>
+          <tr><td>Backups</td><td>Supabase managed</td><td>Plan-dependent</td><td>Erased data persists until roll-off <span class="b b-warn">B</span></td></tr>
+          <tr><td>Application logs</td><td>Supabase platform</td><td>Platform default</td><td>Platform-managed <span class="b b-warn">B</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>04 — Controls</h2>
+    <p class="h2sub">Access, encryption and isolation</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Control</th><th>Detail</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>Row Level Security</td><td>Enabled on all six tables; isolation enforced in Postgres, not application code</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td>Storage isolation</td><td>Objects scoped to <code>{user_id}/</code> prefix</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td>Encryption in transit</td><td>TLS on every connection</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td>Encryption at rest</td><td>AES-256, Supabase platform</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td>Secrets</td><td>Held server-side; no secret keys in the frontend bundle</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td>Browser PHI cleared at sign-out</td><td>Sweeps all users' residue on shared workstations</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td>Transcript integrity</td><td>Letter generated only from the text the clinician approved</td><td><span class="b b-ok">A</span></td></tr>
+          <tr><td>Password reset</td><td>No "forgot password" flow</td><td><span class="b b-risk">C</span></td></tr>
+          <tr><td>Multi-factor authentication</td><td>Not implemented; Supabase supports TOTP</td><td><span class="b b-risk">C</span></td></tr>
+          <tr><td>Audit trail coverage</td><td>Export, erasure and purge logged; logins and record access not</td><td><span class="b b-warn">C</span></td></tr>
+          <tr><td>Per-patient deletion</td><td>Erasure is per clinician account, not per patient</td><td><span class="b b-risk">C</span></td></tr>
+          <tr><td>Staging separation</td><td>No staging project; development points at production</td><td><span class="b b-warn">C</span></td></tr>
+          <tr><td>Penetration test</td><td>Not yet commissioned</td><td><span class="b b-risk">D</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>05 — Outstanding</h2>
+    <p class="h2sub">What to action, in order</p>
+    <div class="actions">
+      <div class="act p1">
+        <span class="num">01</span>
+        <span><span class="t">OpenAI — Zero Data Retention and an EU-resident project <span class="b b-risk">D</span></span><span class="d">The only route by which patient data leaves the EEA, and the only item with external lead time. The application is already built to switch via one environment variable once the account is enabled. Start this first.</span></span>
+      </div>
+      <div class="act p1">
+        <span class="num">02</span>
+        <span><span class="t">Per-patient location, export and deletion <span class="b b-risk">C</span></span><span class="d">Current tooling operates per clinician account. A DPIA is likely to require the ability to act on a single patient's records.</span></span>
+      </div>
+      <div class="act p2">
+        <span class="num">03</span>
+        <span><span class="t">Resend — confirm and move to the EU region <span class="b b-warn">D</span></span><span class="d">Letters and transcripts are emailed through it, so it carries patient data.</span></span>
+      </div>
+      <div class="act p2">
+        <span class="num">04</span>
+        <span><span class="t">Delete the unused legacy ASR service <span class="b b-warn">C</span></span><span class="d">Still deployed in Virginia but receives no traffic. Deleting it removes a US processor and the Hugging Face dependency outright.</span></span>
+      </div>
+      <div class="act p2">
+        <span class="num">05</span>
+        <span><span class="t">Extend the audit trail <span class="b b-warn">C</span></span><span class="d">The table and its append-only guarantees exist; event coverage needs logins, record access and letter generation.</span></span>
+      </div>
+      <div class="act p2">
+        <span class="num">06</span>
+        <span><span class="t">Multi-factor authentication and password reset <span class="b b-warn">C</span></span><span class="d">Both will be queried for a system holding special category data.</span></span>
+      </div>
+      <div class="act">
+        <span class="num">07</span>
+        <span><span class="t">Self-host web fonts <span class="b b-warn">C</span></span><span class="d">Removes Google as a recipient of clinician IP addresses on every page load.</span></span>
+      </div>
+      <div class="act">
+        <span class="num">08</span>
+        <span><span class="t">Commission an independent penetration test <span class="b b-risk">D</span></span><span class="d">Standard before NHS go-live, and expected for DTAC.</span></span>
+      </div>
+      <div class="act">
+        <span class="num">09</span>
+        <span><span class="t">Confirm regions and backup policy <span class="b b-warn">B</span></span><span class="d">Render region, Resend region, Supabase backup window, and how long erased data persists in backups.</span></span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Prepared by the development team as technical evidence. It records the system as built and is not legal advice — lawful basis, the Article 9 condition and transfer assessments require sign-off by a data protection officer. Until Zero Data Retention is granted, the recommendation is to use synthetic or anonymised data for pilots and demonstrations.
+  </footer>
+
+</div>
