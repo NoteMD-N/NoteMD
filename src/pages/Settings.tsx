@@ -14,6 +14,8 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { User, Shield, Save, Loader2, Users, Mail, Plus, X, UserPlus } from "lucide-react";
 import { toast } from "sonner";
+import TwoFactorSettings from "@/components/TwoFactorSettings";
+import PatientDataRequest from "@/components/PatientDataRequest";
 
 const Settings = () => {
   const { user } = useAuth();
@@ -648,6 +650,14 @@ const Settings = () => {
 
         {/* Security Tab */}
         <TabsContent value="security" className="space-y-6">
+          {/* Second factor — enrolment and removal */}
+          <TwoFactorSettings />
+
+          {/* Per-patient data subject requests (Art. 15/17/20).
+              Secretaries act on a clinician's behalf and should not be able to
+              erase patient records, so this is hidden from them. */}
+          {!isSecretary && <PatientDataRequest />}
+
           {/* Data residency self-check */}
           <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>
