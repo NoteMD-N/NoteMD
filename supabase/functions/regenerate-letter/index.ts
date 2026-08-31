@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTemplateSelection } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { redactVendorError } from "../_shared/redact.ts";
 
 // ---------------------------------------------------------------------------
 // OpenAI endpoint base.
@@ -205,7 +206,7 @@ revised letter.`
 
     if (!gptResponse.ok) {
       const errText = await gptResponse.text();
-      console.error("GPT error:", errText);
+      console.error("GPT error:", redactVendorError(errText));
       throw new Error(`Regeneration failed: ${errText}`);
     }
 

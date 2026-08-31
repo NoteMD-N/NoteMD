@@ -666,21 +666,15 @@ const Record = () => {
       if (data.ws_url) streamEndpointRef.current = data.ws_url;
     }
 
-    const params = new URLSearchParams({
-      model: "nova-2-medical",
-      language: "en-GB",
-      smart_format: "true",
-      punctuate: "true",
-      interim_results: "true",
-      utterance_end_ms: "1000",
-      vad_events: "true",
-    });
-
-    // Endpoint comes from the server (EU-resident by default). The literal
-    // below is only a last-resort fallback if the token response predates this
-    // field; it points at the same EU host so residency is preserved either way.
-    const endpoint = streamEndpointRef.current || "wss://api.eu.deepgram.com/v1/listen";
-    const ws = new WebSocket(`${endpoint}?${params}`, ["token", key!]);
+    // The complete URL — region, recognition options and the mandatory
+    // no-retention opt-out — is built server-side and returned by the token
+    // function. The browser deliberately does not assemble it, so it cannot
+    // omit the opt-out or point at a non-EU region.
+    const endpoint = streamEndpointRef.current;
+    if (!endpoint) {
+      throw new Error("Could not start the transcription service");
+    }
+    const ws = new WebSocket(endpoint, ["token", key!]);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {

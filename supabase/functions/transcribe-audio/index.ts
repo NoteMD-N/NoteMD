@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveProvider, providerTier, streamingHttpUrl } from "../_shared/transcription-policy.ts";
+import { resolveProvider, providerTier, buildBatchUrl } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { redactVendorError } from "../_shared/redact.ts";
 
 // GCP identity token (for private Cloud Run service auth)
 async function getGcpIdentityToken(serviceAccountKey: string, targetAudience: string): Promise<string> {
@@ -130,7 +131,7 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
 
   if (!resp.ok) {
     const body = await resp.text();
-    console.error("[transcribe-openai] HTTP", resp.status, body.slice(0, 500));
+    console.error("[transcribe-openai] HTTP", resp.status, redactVendorError(body));
     // Surface a useful message rather than a bare status code.
     let detail = "";
     try { detail = JSON.parse(body)?.error?.message || ""; } catch { /* plain text body */ }
@@ -167,7 +168,7 @@ async function transcribeMedical(audioBlob: Blob, audioPath: string): Promise<st
   });
   if (!resp.ok) {
     const body = await resp.text();
-    console.error("[transcribe-audio] Medical HTTP", resp.status, body.slice(0, 500));
+    console.error("[transcribe-audio] Medical HTTP", resp.status, redactVendorError(body));
     throw new Error(`Transcription failed (HTTP ${resp.status})`);
   }
   const result = await resp.json();
@@ -184,14 +185,8 @@ async function transcribeStreaming(audioBlob: Blob, audioPath: string): Promise<
   const contentType = CONTENT_TYPE_MAP[ext] || "audio/webm";
   const arrayBuffer = await audioBlob.arrayBuffer();
 
-  const params = new URLSearchParams({
-    model: "nova-2-medical",
-    language: "en-GB",
-    smart_format: "true",
-    punctuate: "true",
-    paragraphs: "true",
-  });
-  const resp = await fetch(`${streamingHttpUrl(Deno.env.get("DEEPGRAM_API_BASE"))}?${params}`, {
+  // URL built centrally so the privacy opt-out is always present.
+  const resp = await fetch(buildBatchUrl(Deno.env.get("DEEPGRAM_API_BASE")), {
     method: "POST",
     headers: {
       Authorization: `Token ${DEEPGRAM_API_KEY}`,
@@ -201,7 +196,7 @@ async function transcribeStreaming(audioBlob: Blob, audioPath: string): Promise<
   });
   if (!resp.ok) {
     const body = await resp.text();
-    console.error("[transcribe-audio] Streaming HTTP", resp.status, body.slice(0, 500));
+    console.error("[transcribe-audio] Streaming HTTP", resp.status, redactVendorError(body));
     throw new Error(`Transcription failed (HTTP ${resp.status})`);
   }
   const result = await resp.json();

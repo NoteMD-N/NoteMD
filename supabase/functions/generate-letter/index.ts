@@ -4,9 +4,10 @@ import {
   resolveProvider,
   shouldServerTranscribe,
   resolveTemplateSelection,
-  streamingHttpUrl,
+  buildBatchUrl,
 } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { redactVendorError } from "../_shared/redact.ts";
 
 // ============================================================
 // GCP identity token (for Cloud Run private service auth)
@@ -142,7 +143,7 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
 
   if (!resp.ok) {
     const body = await resp.text();
-    console.error("[transcribe-openai] HTTP", resp.status, body.slice(0, 500));
+    console.error("[transcribe-openai] HTTP", resp.status, redactVendorError(body));
     // Surface a useful message rather than a bare status code.
     let detail = "";
     try { detail = JSON.parse(body)?.error?.message || ""; } catch { /* plain text body */ }
@@ -180,7 +181,7 @@ async function transcribeDictation(audioBlob: Blob, audioPath: string): Promise<
   });
   if (!resp.ok) {
     const body = await resp.text();
-    console.error("[transcribe-dictation] HTTP", resp.status, body.slice(0, 500));
+    console.error("[transcribe-dictation] HTTP", resp.status, redactVendorError(body));
     throw new Error(`Dictation transcription failed (HTTP ${resp.status})`);
   }
   const result = await resp.json();
@@ -197,14 +198,8 @@ async function transcribeConsultation(audioBlob: Blob, audioPath: string): Promi
   const contentType = contentTypeFor(audioPath);
   const arrayBuffer = await audioBlob.arrayBuffer();
 
-  const params = new URLSearchParams({
-    model: "nova-2-medical",
-    language: "en-GB",
-    smart_format: "true",
-    punctuate: "true",
-    paragraphs: "true",
-  });
-  const resp = await fetch(`${streamingHttpUrl(Deno.env.get("DEEPGRAM_API_BASE"))}?${params}`, {
+  // URL built centrally so the privacy opt-out is always present.
+  const resp = await fetch(buildBatchUrl(Deno.env.get("DEEPGRAM_API_BASE")), {
     method: "POST",
     headers: {
       Authorization: `Token ${DEEPGRAM_API_KEY}`,
@@ -214,7 +209,7 @@ async function transcribeConsultation(audioBlob: Blob, audioPath: string): Promi
   });
   if (!resp.ok) {
     const body = await resp.text();
-    console.error("[transcribe-consultation] HTTP", resp.status, body.slice(0, 500));
+    console.error("[transcribe-consultation] HTTP", resp.status, redactVendorError(body));
     throw new Error(`Consultation transcription failed (HTTP ${resp.status})`);
   }
   const result = await resp.json();
@@ -833,7 +828,7 @@ The clinician remains entirely responsible for clinical content. Your role is do
 
     if (!gptResponse.ok) {
       const errText = await gptResponse.text();
-      console.error("GPT error:", errText);
+      console.error("GPT error:", redactVendorError(errText));
       await supabase.from("recordings").update({ status: "error" }).eq("id", recording_id);
       // Extract a short, user-readable reason if the OpenAI response is JSON
       let short = errText.slice(0, 200);
@@ -894,7 +889,7 @@ The clinician remains entirely responsible for clinical content. Your role is do
           }
         );
         if (!emailResp.ok) {
-          console.warn("Auto-send email did not complete:", await emailResp.text());
+          console.warn("Auto-send email did not complete:", redactVendorError(await emailResp.text()));
         }
       }
     } catch (e) {

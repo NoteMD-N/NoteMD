@@ -231,3 +231,90 @@ export function resolveResidencyVerdict(input: ResidencyInput): ResidencyVerdict
 
   return "unreachable";
 }
+
+// ---------------------------------------------------------------------------
+// Streaming-provider request parameters.
+//
+// mip_opt_out=true opts the request out of the vendor's model improvement
+// programme, so submitted audio is neither retained nor used for training.
+// The vendor confirmed this must be set on EVERY request; a single call
+// without it re-introduces retention for that audio.
+//
+// The parameters are built here rather than at each call site because there
+// are four of them (live socket, two batch paths, diagnostics) and a control
+// that must hold "on every request" cannot depend on four places staying in
+// step. buildStreamingUrl() below returns a complete URL so the browser never
+// assembles its own.
+// ---------------------------------------------------------------------------
+
+/** Applied to every request to the streaming provider, without exception. */
+export const REQUIRED_PRIVACY_PARAMS: Record<string, string> = {
+  mip_opt_out: "true",
+};
+
+const BASE_RECOGNITION_PARAMS: Record<string, string> = {
+  model: "nova-2-medical",
+  language: "en-GB",
+  smart_format: "true",
+  punctuate: "true",
+};
+
+/** Query parameters for the real-time socket. */
+export function streamingParams(extra: Record<string, string> = {}): URLSearchParams {
+  return new URLSearchParams({
+    ...BASE_RECOGNITION_PARAMS,
+    interim_results: "true",
+    utterance_end_ms: "1000",
+    vad_events: "true",
+    ...extra,
+    ...REQUIRED_PRIVACY_PARAMS, // last, so it cannot be overridden by a caller
+  });
+}
+
+/** Query parameters for the pre-recorded/batch endpoint. */
+export function batchParams(extra: Record<string, string> = {}): URLSearchParams {
+  return new URLSearchParams({
+    ...BASE_RECOGNITION_PARAMS,
+    paragraphs: "true",
+    ...extra,
+    ...REQUIRED_PRIVACY_PARAMS, // last, so it cannot be overridden by a caller
+  });
+}
+
+/**
+ * Complete websocket URL, region and privacy parameters included.
+ *
+ * Returned to the browser by the token function so the client never builds a
+ * provider URL itself — it cannot omit the opt-out or point at another region.
+ */
+export function buildStreamingUrl(configured: string | null | undefined): string {
+  return `${streamingWsUrl(configured)}?${streamingParams().toString()}`;
+}
+
+/** Complete HTTPS URL for the batch endpoint. */
+export function buildBatchUrl(configured: string | null | undefined): string {
+  return `${streamingHttpUrl(configured)}?${batchParams().toString()}`;
+}
+
+/** True when a URL carries the privacy opt-out. Used by the diagnostics check. */
+export function hasPrivacyOptOut(url: string): boolean {
+  try {
+    const qs = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+    const params = new URLSearchParams(qs);
+    return Object.entries(REQUIRED_PRIVACY_PARAMS)
+      .every(([k, v]) => params.get(k) === v);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Batch URL for an EXPLICIT host, rather than the configured one.
+ *
+ * The residency diagnostic probes the EU and global hosts side by side, so it
+ * cannot use the configured host. It still routes through here so the privacy
+ * opt-out is applied to diagnostic requests too.
+ */
+export function buildBatchUrlForHost(host: string): string {
+  return `https://${host}/v1/listen?${batchParams().toString()}`;
+}

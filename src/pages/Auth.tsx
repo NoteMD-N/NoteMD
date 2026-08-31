@@ -13,8 +13,11 @@ const FEATURES = [
   { icon: ShieldCheck, text: "UK-hosted, encrypted, and built around NHS documentation standards" },
 ];
 
+type Mode = "login" | "signup" | "reset";
+
 const Auth = () => {
-  const [isLogin, setIsLogin] = useState(true);
+  const [mode, setMode] = useState<Mode>("login");
+  const isLogin = mode === "login";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -25,7 +28,16 @@ const Auth = () => {
     setLoading(true);
 
     try {
-      if (isLogin) {
+      if (mode === "reset") {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/reset-password`,
+        });
+        if (error) throw error;
+        // Deliberately worded so it does not reveal whether the address is
+        // registered — otherwise this becomes an account enumeration oracle.
+        toast.success("If that address has an account, a reset link is on its way.");
+        setMode("login");
+      } else if (isLogin) {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         toast.success("Logged in successfully");
@@ -100,17 +112,23 @@ const Auth = () => {
 
           <div className="mb-6">
             <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground">
-              {isLogin ? "Welcome back" : "Create your account"}
+              {mode === "reset"
+                ? "Reset your password"
+                : isLogin
+                ? "Welcome back"
+                : "Create your account"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {isLogin
                 ? "Sign in to access your recordings and letters"
+                : mode === "reset"
+                ? "We'll email you a link to set a new password"
                 : "Register to start documenting consultations"}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {!isLogin && (
+            {mode === "signup" && (
               <div className="space-y-1.5">
                 <Label htmlFor="fullName">Full Name</Label>
                 <Input
@@ -119,7 +137,7 @@ const Auth = () => {
                   placeholder="Dr. John Smith"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  required={!isLogin}
+                  required={mode === "signup"}
                   className="h-11"
                 />
               </div>
@@ -136,25 +154,44 @@ const Auth = () => {
                 className="h-11"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-                className="h-11"
-              />
-            </div>
+            {mode !== "reset" && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="password">Password</Label>
+                  {isLogin && (
+                    <button
+                      type="button"
+                      onClick={() => setMode("reset")}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required={mode !== "reset"}
+                  minLength={6}
+                  className="h-11"
+                />
+              </div>
+            )}
+
+            {mode === "reset" && (
+              <p className="text-sm text-muted-foreground">
+                Enter your email address and we'll send you a link to set a new password.
+              </p>
+            )}
             <Button type="submit" className="h-11 w-full font-medium" disabled={loading}>
               {loading ? (
                 "Please wait..."
               ) : (
                 <span className="flex items-center gap-2">
-                  {isLogin ? "Sign In" : "Create Account"}
+                  {mode === "reset" ? "Send reset link" : isLogin ? "Sign In" : "Create Account"}
                   <ArrowRight className="h-4 w-4" />
                 </span>
               )}
@@ -162,14 +199,26 @@ const Auth = () => {
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
-            {isLogin ? "Don't have an account? " : "Already have an account? "}
-            <button
-              type="button"
-              onClick={() => setIsLogin(!isLogin)}
-              className="font-medium text-primary hover:underline"
-            >
-              {isLogin ? "Register" : "Sign in"}
-            </button>
+            {mode === "reset" ? (
+              <button
+                type="button"
+                onClick={() => setMode("login")}
+                className="font-medium text-primary hover:underline"
+              >
+                Back to sign in
+              </button>
+            ) : (
+              <>
+                {isLogin ? "Don't have an account? " : "Already have an account? "}
+                <button
+                  type="button"
+                  onClick={() => setMode(isLogin ? "signup" : "login")}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {isLogin ? "Register" : "Sign in"}
+                </button>
+              </>
+            )}
           </p>
         </div>
       </div>

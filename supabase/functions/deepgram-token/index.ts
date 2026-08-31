@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { streamingWsUrl, isEuResidentStreamingHost } from "../_shared/transcription-policy.ts";
+import { buildStreamingUrl, isEuResidentStreamingHost, hasPrivacyOptOut } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
@@ -41,7 +41,9 @@ serve(async (req) => {
     // region. Changing DEEPGRAM_API_BASE repoints real-time transcription
     // without a frontend rebuild, and keeps one source of truth for residency.
     const configuredBase = Deno.env.get("DEEPGRAM_API_BASE");
-    const wsUrl = streamingWsUrl(configuredBase);
+    // Complete URL: region AND the mandatory privacy opt-out are applied here,
+    // so the browser cannot issue a request missing either.
+    const wsUrl = buildStreamingUrl(configuredBase);
 
     if (!isEuResidentStreamingHost(configuredBase)) {
       // Loud, because this means patient audio is leaving EU infrastructure.
@@ -50,6 +52,12 @@ serve(async (req) => {
         wsUrl,
         "- set DEEPGRAM_API_BASE=https://api.eu.deepgram.com for EU residency",
       );
+    }
+
+    // Defensive: never hand out a URL lacking the opt-out.
+    if (!hasPrivacyOptOut(wsUrl)) {
+      console.error("[deepgram-token] refusing to issue URL without privacy opt-out");
+      throw new Error("Transcription service is misconfigured");
     }
 
     return new Response(

@@ -2,7 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import {
-  streamingHttpUrl,
+  buildBatchUrlForHost,
+  hasPrivacyOptOut,
   resolveStreamingHost,
   isEuResidentStreamingHost,
   STREAMING_EU_HOST,
@@ -80,10 +81,14 @@ type ProbeResult = {
   key_accepted: boolean | null;
   region: string | null;
   latency_ms: number | null;
+  /** Whether the request carried the no-retention / no-training opt-out. */
+  privacy_opt_out: boolean;
 };
 
 async function probeStreaming(host: string, apiKey: string, wav: Uint8Array): Promise<ProbeResult> {
-  const endpoint = `https://${host}/v1/listen?model=nova-2-medical&language=en-GB`;
+  // Probe with the exact parameters production uses, so the check exercises
+  // the real request shape including the privacy opt-out.
+  const endpoint = buildBatchUrlForHost(host);
   const started = Date.now();
   try {
     const resp = await fetch(endpoint, {
@@ -102,6 +107,7 @@ async function probeStreaming(host: string, apiKey: string, wav: Uint8Array): Pr
       key_accepted: status === 200 || status === 400 ? true : status === 401 || status === 403 ? false : null,
       region: await regionHintFor(host),
       latency_ms: Date.now() - started,
+      privacy_opt_out: hasPrivacyOptOut(endpoint),
     };
   } catch (e) {
     console.error(`[diagnostics] probe failed for ${host}:`, e);
@@ -112,6 +118,7 @@ async function probeStreaming(host: string, apiKey: string, wav: Uint8Array): Pr
       key_accepted: null,
       region: null,
       latency_ms: Date.now() - started,
+      privacy_opt_out: hasPrivacyOptOut(endpoint),
     };
   }
 }
@@ -201,6 +208,7 @@ serve(async (req) => {
         verdict,
         summary,
         eu_resident: euConfigured,
+        privacy_opt_out: configured.privacy_opt_out,
         configured_endpoint: configuredHost,
         expected_eu_endpoint: STREAMING_EU_HOST,
         checks: { configured, global },

@@ -685,8 +685,9 @@ const Settings = () => {
               {residencyCheck && (
                 <div
                   className={`rounded-xl border p-4 text-sm ${
-                    residencyCheck.verdict === "eu_ok" ||
-                    residencyCheck.verdict === "eu_ok_region_locked"
+                    (residencyCheck.verdict === "eu_ok" ||
+                      residencyCheck.verdict === "eu_ok_region_locked") &&
+                    residencyCheck.privacy_opt_out !== false
                       ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40"
                       : "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40"
                   }`}
@@ -718,6 +719,12 @@ const Settings = () => {
                           <dd className="font-mono">{residencyCheck.checks.configured.region}</dd>
                         </>
                       )}
+                      <dt>Retention</dt>
+                      <dd>
+                        {residencyCheck.privacy_opt_out
+                          ? "Opted out — audio not retained or used for training"
+                          : "Opt-out NOT applied"}
+                      </dd>
                       <dt>Response</dt>
                       <dd className="font-mono">
                         HTTP {residencyCheck.checks.configured.http_status ?? "—"}
