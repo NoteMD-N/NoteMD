@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { letterRoute } from "@/lib/letter-route";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -212,7 +213,7 @@ const Dashboard = () => {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => navigate(`/letter/${letter.id}`)}
+                            onClick={() => navigate(letterRoute(letter.id))}
                             className="gap-1 rounded-lg text-primary"
                           >
                             <FileText className="h-3.5 w-3.5" />

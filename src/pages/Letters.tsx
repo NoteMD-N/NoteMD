@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { letterRoute } from "@/lib/letter-route";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -163,7 +164,7 @@ const Letters = () => {
                   <li key={letter.id} className="p-4">
                     <div className="flex items-start justify-between gap-3">
                       <button
-                        onClick={() => navigate(`/letter/${letter.id}`)}
+                        onClick={() => navigate(letterRoute(letter.id))}
                         className="min-w-0 flex-1 text-left"
                       >
                         <div className="flex items-center gap-2 flex-wrap">
@@ -191,7 +192,7 @@ const Letters = () => {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => navigate(`/letter/${letter.id}`)}>
+                          <DropdownMenuItem onClick={() => navigate(letterRoute(letter.id))}>
                             <Eye className="mr-2 h-4 w-4" />
                             View
                           </DropdownMenuItem>
@@ -270,7 +271,7 @@ const Letters = () => {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => navigate(`/letter/${letter.id}`)}>
+                              <DropdownMenuItem onClick={() => navigate(letterRoute(letter.id))}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 View
                               </DropdownMenuItem>

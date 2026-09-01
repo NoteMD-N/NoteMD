@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+import { letterIdFromHash } from "@/lib/letter-route";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,7 +42,11 @@ const QUICK_PROMPTS = [
 ];
 
 const LetterView = () => {
-  const { id } = useParams<{ id: string }>();
+  // The letter identifier travels in the URL fragment rather than the path,
+  // so it is never sent to the static host and cannot appear in its access
+  // logs. See lib/letter-route.ts.
+  const location = useLocation();
+  const id = letterIdFromHash(location.hash);
   const navigate = useNavigate();
   const [letter, setLetter] = useState<Letter | null>(null);
   const [editedContent, setEditedContent] = useState("");
@@ -59,7 +64,14 @@ const LetterView = () => {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id) {
+      // No fragment, or one that isn't a valid identifier. Stop loading and
+      // send the user somewhere useful rather than spinning indefinitely.
+      setLoading(false);
+      toast.error("No letter selected");
+      navigate("/letters", { replace: true });
+      return;
+    }
     supabase
       .from("letters")
       .select("*, recordings(audio_path)")

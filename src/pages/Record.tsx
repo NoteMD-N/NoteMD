@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { letterRoute } from "@/lib/letter-route";
 import { readPhi, writePhi, clearPhi, isSnapshotFresh } from "@/lib/local-phi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1249,7 +1250,7 @@ const Record = () => {
       // recording + letter pair to replace it.
       clearRecovery();
       void deleteAutoDraft();
-      navigate(`/letter/${letterId}`);
+      navigate(letterRoute(letterId));
     };
 
     try {

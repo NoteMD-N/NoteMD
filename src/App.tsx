@@ -51,7 +51,9 @@ const App = () => (
               <Route path="/recordings" element={<Recordings />} />
               <Route path="/letters" element={<Letters />} />
               <Route path="/record" element={<Record />} />
-              <Route path="/letter/:id" element={<LetterView />} />
+              {/* No :id — the letter identifier travels in the URL fragment,
+                  which browsers never send to the server. See lib/letter-route.ts */}
+              <Route path="/letter" element={<LetterView />} />
               <Route path="/templates" element={<Templates />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/settings/billing" element={<Billing />} />

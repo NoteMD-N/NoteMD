@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { letterRoute } from "@/lib/letter-route";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -130,7 +131,7 @@ const Recordings = () => {
 
       toast.success(existingLetterId ? "Letter regenerated" : "Letter generated");
       queryClient.invalidateQueries({ queryKey: ["recordings-with-letters"] });
-      if (data?.letter_id) navigate(`/letter/${data.letter_id}`);
+      if (data?.letter_id) navigate(letterRoute(data.letter_id));
     } catch (err: any) {
       toast.error(err.message || "Failed to generate letter");
     } finally {
@@ -243,7 +244,7 @@ const Recordings = () => {
                                 variant="outline"
                                 size="sm"
                                 className="h-8 text-xs gap-1.5"
-                                onClick={() => navigate(`/letter/${letter.id}`)}
+                                onClick={() => navigate(letterRoute(letter.id))}
                               >
                                 <FileText className="h-3.5 w-3.5" />
                                 View letter
@@ -356,7 +357,7 @@ const Recordings = () => {
                                 variant="link"
                                 size="sm"
                                 className="h-auto p-0 text-xs font-mono"
-                                onClick={() => navigate(`/letter/${letter.id}`)}
+                                onClick={() => navigate(letterRoute(letter.id))}
                               >
                                 View
                               </Button>
@@ -373,7 +374,7 @@ const Recordings = () => {
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 {letter && (
-                                  <DropdownMenuItem onClick={() => navigate(`/letter/${letter.id}`)}>
+                                  <DropdownMenuItem onClick={() => navigate(letterRoute(letter.id))}>
                                     <FileText className="mr-2 h-4 w-4" />
                                     View Letter
                                   </DropdownMenuItem>
