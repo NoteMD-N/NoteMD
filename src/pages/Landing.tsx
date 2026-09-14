@@ -68,6 +68,20 @@ const IconWeb = () => (
     {P("M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18")}
   </svg>
 );
+const IconShield = () => (
+  <svg {...iconProps}>
+    {P("M12 3l7.5 3v5.2c0 4.4-3 8.3-7.5 9.8-4.5-1.5-7.5-5.4-7.5-9.8V6L12 3z")}
+    {P("M9.2 12.2l2 2 3.6-3.8")}
+  </svg>
+);
+const IconPeople = () => (
+  <svg {...iconProps}>
+    <circle cx={9} cy={8} r={3.1} stroke="currentColor" strokeWidth={2} fill="none" />
+    {P("M2.8 19.2a6.4 6.4 0 0 1 12.4 0")}
+    {P("M16.2 5.4a3.1 3.1 0 0 1 0 5.9")}
+    {P("M17.6 13.6a6.4 6.4 0 0 1 3.6 5.6")}
+  </svg>
+);
 const IconArrow = () => (
   <svg width={20} height={20} viewBox="0 0 24 24" fill="none">
     {P("M5 12h14M13 6l6 6-6 6")}
@@ -205,12 +219,187 @@ const Section: React.FC<React.PropsWithChildren<React.HTMLAttributes<HTMLElement
   </section>
 );
 
-const Container: React.FC<React.PropsWithChildren<{ maxWidth?: number; style?: React.CSSProperties }>> = ({
-  children,
-  maxWidth = 1180,
-  style,
-}) => (
-  <div style={{ maxWidth, margin: "0 auto", padding: "0 32px", ...style }}>{children}</div>
+const Container: React.FC<
+  React.PropsWithChildren<{ maxWidth?: number; style?: React.CSSProperties; className?: string }>
+> = ({ children, maxWidth = 1180, style, className }) => (
+  // className must be forwarded: the responsive rules at the foot of this file
+  // target these containers, and a dropped class fails silently — the layout
+  // simply never reflows.
+  <div className={className} style={{ maxWidth, margin: "0 auto", padding: "0 32px", ...style }}>
+    {children}
+  </div>
+);
+
+// ---------------------------------------------------------------------------
+// Hero photograph.
+//
+// Drop a file into /public and set the path here. A clinician working at a
+// screen, shot from behind or over the shoulder, suits the layout best — the
+// product window sits over the right-hand side of the image.
+//
+// Leave it null and the hero falls back to the product window on a soft
+// clinical gradient, which is a finished look rather than a placeholder.
+// ---------------------------------------------------------------------------
+const HERO_PHOTO: string | null = null; // e.g. "/hero-clinician.jpg"
+
+/** The NoteMD interface as it appears on screen in the hero. */
+const HeroAppWindow = () => (
+  <div
+    style={{
+      width: "100%",
+      background: "#ffffff",
+      borderRadius: 14,
+      border: "1px solid #e3ebf2",
+      boxShadow: "0 24px 60px -28px rgba(12,37,69,0.35), 0 2px 8px rgba(12,37,69,0.06)",
+      overflow: "hidden",
+      display: "grid",
+      gridTemplateColumns: "132px minmax(0, 1fr)",
+      fontSize: 11,
+    }}
+    className="landing-app-window"
+  >
+    {/* Sidebar */}
+    <div style={{ background: "#f7fafc", borderRight: "1px solid #eef3f7", padding: "14px 10px" }} className="landing-app-sidebar">
+      {/* A small mark rather than the full lockup — the lockup carries a
+          tagline that is illegible at this size. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
+        <span style={{ width: 16, height: 16, borderRadius: 4, background: "#14315c", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none">
+            <path d="M20 6L9 17l-5-5" stroke="#4fd6c5" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <span style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 700, fontSize: 11, color: "#14315c", letterSpacing: "-0.01em" }}>NoteMD</span>
+      </div>
+      {[
+        { label: "Record", active: false },
+        { label: "Transcribe", active: false },
+        { label: "Generate Note", active: true },
+        { label: "Review", active: false },
+        { label: "Export", active: false },
+      ].map((item) => (
+        <div
+          key={item.label}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            padding: "6px 8px",
+            borderRadius: 6,
+            marginBottom: 3,
+            background: item.active ? "#e3f4f1" : "transparent",
+            color: item.active ? "#0c7d72" : "#6b7c90",
+            fontWeight: item.active ? 600 : 500,
+          }}
+        >
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: item.active ? "#10a294" : "#c3d1dc" }} />
+          {item.label}
+        </div>
+      ))}
+    </div>
+
+    {/* Main panel */}
+    <div style={{ padding: "14px 16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <span style={{ fontWeight: 700, color: "#0c2545", fontSize: 12 }}>Consultation</span>
+        <span style={{ color: "#9aa7b5", fontSize: 9.5 }}>AI draft — review before use</span>
+      </div>
+
+      {/* Player */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <span style={{ width: 20, height: 20, borderRadius: "50%", background: "#10a294", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z" /></svg>
+        </span>
+        <span style={{ flex: 1, height: 3, borderRadius: 2, background: "linear-gradient(90deg, #10a294 38%, #e3ebf2 38%)" }} />
+        <span style={{ color: "#9aa7b5", fontSize: 9, fontVariantNumeric: "tabular-nums" }}>00:12 / 24:08</span>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 88px", gap: 12 }} className="landing-app-body">
+        <div>
+          <div style={{ fontWeight: 700, color: "#0c2545", marginBottom: 7, fontSize: 11 }}>Clinical Note</div>
+          {["History", "Examination", "Assessment", "Plan"].map((section, i) => (
+            <div key={section} style={{ marginBottom: 9 }}>
+              <div style={{ fontWeight: 600, color: "#0c7d72", fontSize: 9.5, marginBottom: 3 }}>{section}</div>
+              {/* Representative body copy, not real clinical content */}
+              {Array.from({ length: i === 0 ? 2 : 1 }).map((_, j) => (
+                <div key={j} style={{ height: 3.5, borderRadius: 2, background: "#e8eef4", marginBottom: 3, width: j === 1 ? "72%" : "100%" }} />
+              ))}
+            </div>
+          ))}
+        </div>
+
+        {/* Outcome badge */}
+        <div style={{ background: "#eaf7f0", border: "1px solid #cfeadb", borderRadius: 9, padding: "10px 8px", textAlign: "center", alignSelf: "start" }}>
+          <span style={{ display: "inline-flex", width: 20, height: 20, borderRadius: "50%", border: "1.5px solid #1b7f4d", alignItems: "center", justifyContent: "center", marginBottom: 5 }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+              <path d="M20 6L9 17l-5-5" stroke="#1b7f4d" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+          <div style={{ fontSize: 9.5, fontWeight: 700, color: "#14603c", lineHeight: 1.3 }}>More time<br />for patients</div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+/** Hero visual: the product window, over a photograph when one is supplied. */
+const HeroVisual = () => (
+  <div style={{ position: "relative", width: "100%" }}>
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        minHeight: 380,
+        borderRadius: 20,
+        overflow: "hidden",
+        background: HERO_PHOTO
+          ? undefined
+          : "linear-gradient(150deg, #eaf3f9 0%, #f4f9fc 45%, #eef7f5 100%)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 26,
+      }}
+    >
+      {HERO_PHOTO && (
+        <img
+          src={HERO_PHOTO}
+          alt="A clinician reviewing notes in NoteMD"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      )}
+      {/* Softens the photograph so the product window stays legible over it. */}
+      {HERO_PHOTO && (
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(110deg, rgba(255,255,255,0.82) 0%, rgba(255,255,255,0.35) 55%, rgba(255,255,255,0.08) 100%)" }} />
+      )}
+      <div style={{ position: "relative", width: "100%", maxWidth: 430 }}>
+        <HeroAppWindow />
+      </div>
+    </div>
+
+    {/* Script accent, as in the brand artwork */}
+    <div style={{ textAlign: "right", marginTop: 14, paddingRight: 6 }}>
+      <span style={{ fontFamily: "'Caveat', cursive", fontSize: 30, lineHeight: 1.05, color: "#14315c", display: "block" }}>
+        Less typing.
+      </span>
+      <span style={{ fontFamily: "'Caveat', cursive", fontSize: 30, lineHeight: 1.05, color: "#14315c", display: "block" }}>
+        More caring.
+      </span>
+      <span style={{ display: "inline-block", width: 96, height: 2, background: "#10a294", borderRadius: 2, marginTop: 4 }} />
+    </div>
+  </div>
+);
+
+/** Soft wave closing the hero, matching the brand artwork. */
+const HeroWave = () => (
+  <svg
+    viewBox="0 0 1440 90"
+    preserveAspectRatio="none"
+    style={{ display: "block", width: "100%", height: 70, marginTop: -1 }}
+    aria-hidden="true"
+  >
+    <path d="M0 54C240 96 420 18 720 30s520 74 720 30v30H0z" fill="#eaf3f9" />
+    <path d="M0 66C260 102 440 40 720 48s520 62 720 26v16H0z" fill="#ffffff" />
+  </svg>
 );
 
 // ---------- Page ----------
@@ -237,7 +426,7 @@ const Landing = () => {
       >
         <Container style={{ padding: "14px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
           <Link to="/" style={{ ...linkReset, display: "flex", alignItems: "center", flexShrink: 0 }}>
-            <img src="/notemdcolor.png" alt="NoteMD" style={{ height: 38, width: "auto", display: "block" }} />
+            <img src="/notemdcolor.png" alt="NoteMD" style={{ height: 30, width: "auto", display: "block" }} />
           </Link>
           <nav style={{ display: "flex", alignItems: "center", gap: 34 }} className="landing-nav">
             <a href="#demo" style={{ fontSize: 15, fontWeight: 600, color: "#44566b", ...linkReset }}>Demo</a>
@@ -266,102 +455,127 @@ const Landing = () => {
 
       <main id="top">
         {/* HERO */}
-        <Section style={{ position: "relative", overflow: "hidden", background: "linear-gradient(180deg, #f3f8fb 0%, #ffffff 100%)" }}>
+        <Section style={{ position: "relative", overflow: "hidden", background: "linear-gradient(170deg, #ffffff 0%, #f7fbfd 55%, #eef6fa 100%)" }}>
+          <Container style={{ padding: "40px 32px 8px" }}>
+            {/* Brand mark and positioning line, as in the brand artwork */}
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 24, flexWrap: "wrap", marginBottom: 30 }}>
+              <img src="/notemdcolor.png" alt="NoteMD — Clinical Documentation Solutions" style={{ height: 72, width: "auto", display: "block" }} className="landing-hero-logo" />
+              <div style={{ textAlign: "right", paddingTop: 6 }}>
+                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, letterSpacing: "0.1em", lineHeight: 1.7, color: "#14315c", textTransform: "uppercase" }}>
+                  Built for clinicians.<br />For a brighter tomorrow.
+                </p>
+                <span style={{ display: "inline-block", width: 72, height: 2, background: "#10a294", borderRadius: 2, marginTop: 8 }} />
+              </div>
+            </div>
+          </Container>
+
           <Container
+            className="landing-hero-grid"
             style={{
-              padding: "84px 32px 92px",
+              padding: "0 32px 20px",
               display: "grid",
-              gridTemplateColumns: "1.05fr 0.95fr",
-              gap: 64,
+              gridTemplateColumns: "1.02fr 0.98fr",
+              gap: 56,
               alignItems: "center",
             }}
           >
             <div>
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 9,
-                  padding: "7px 14px",
-                  background: "#e3f4f1",
-                  borderRadius: 100,
-                  marginBottom: 26,
-                }}
-              >
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#10a294", display: "inline-block" }} />
-                <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#0c7d72" }}>
-                  Built by clinicians, for clinicians
-                </span>
-              </div>
               <h1
                 style={{
                   fontFamily: "'Libre Franklin', sans-serif",
                   fontWeight: 800,
-                  fontSize: "clamp(40px, 5vw, 60px)",
-                  lineHeight: 1.04,
-                  letterSpacing: "-0.025em",
-                  margin: "0 0 22px",
-                  color: "#0c2545",
+                  fontSize: "clamp(40px, 5.4vw, 64px)",
+                  lineHeight: 1.02,
+                  letterSpacing: "-0.03em",
+                  margin: "0 0 20px",
+                  color: "#14315c",
+                  textWrap: "balance",
                 }}
               >
-                AI-powered clinical
-                <br />
-                documentation
+                More time<br />for what <span style={{ color: "#2E86C8" }}>matters.</span>
               </h1>
-              <p style={{ fontSize: 19, lineHeight: 1.6, color: "#44566b", margin: "0 0 34px", maxWidth: 520 }}>
-                NoteMD turns dictated or written input into accurate, structured clinical notes in seconds — so you spend less time on paperwork and more time with patients.
+
+              <p style={{ fontSize: 19.5, lineHeight: 1.55, color: "#44566b", margin: "0 0 32px", maxWidth: 470 }}>
+                AI-assisted clinical documentation to reduce admin, save time and
+                give you more time for your patients.
               </p>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-                <Link
-                  to={primaryHref}
-                  style={{ fontSize: 17, fontWeight: 700, color: "#ffffff", background: "#14315c", padding: "15px 30px", borderRadius: 9, ...linkReset }}
-                >
-                  {primaryLabel}
-                </Link>
-                <a
-                  href="#how"
-                  style={{
-                    fontSize: 17,
-                    fontWeight: 700,
-                    color: "#14315c",
-                    background: "#ffffff",
-                    border: "1.5px solid #cdd9e3",
-                    padding: "14px 28px",
-                    borderRadius: 9,
-                    ...linkReset,
-                  }}
-                >
-                  See how it works
-                </a>
+
+              {/* Four pillars */}
+              <div className="landing-hero-pillars" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 18, marginBottom: 34 }}>
+                {[
+                  { icon: <IconClock />, title: "Save time", body: "From conversation to structured notes" },
+                  { icon: <IconLayers />, title: "Accurate & consistent", body: "High-quality clinical documentation" },
+                  { icon: <IconShield />, title: "Secure & compliant", body: "Built for NHS standards" },
+                  { icon: <IconPeople />, title: "For clinicians by clinicians", body: "Designed around real-world workflows" },
+                ].map((f) => (
+                  <div key={f.title}>
+                    <span
+                      style={{
+                        display: "flex",
+                        width: 42,
+                        height: 42,
+                        borderRadius: "50%",
+                        background: "#eaf2f8",
+                        color: "#14315c",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        marginBottom: 11,
+                      }}
+                    >
+                      {f.icon}
+                    </span>
+                    <p style={{ margin: "0 0 3px", fontSize: 14.5, fontWeight: 700, color: "#14315c", lineHeight: 1.25 }}>{f.title}</p>
+                    <p style={{ margin: 0, fontSize: 13, color: "#5b6b80", lineHeight: 1.4 }}>{f.body}</p>
+                  </div>
+                ))}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 22, marginTop: 34, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: "#10a294" }}><Check /></span>
-                  <span style={{ fontSize: 14.5, fontWeight: 600, color: "#54667a" }}>GDPR compliant</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: "#10a294" }}><Check /></span>
-                  <span style={{ fontSize: 14.5, fontWeight: 600, color: "#54667a" }}>NHS-ready</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: "#10a294" }}><Check /></span>
-                  <span style={{ fontSize: 14.5, fontWeight: 600, color: "#54667a" }}>Patient-data protected</span>
-                </div>
-              </div>
-            </div>
-            <div style={{ position: "relative" }}>
-              <div
+
+              <Link
+                to={primaryHref}
                 style={{
-                  position: "absolute",
-                  inset: -18,
-                  background: "radial-gradient(120% 120% at 70% 20%, rgba(16,162,148,0.14), transparent 60%)",
-                  borderRadius: 28,
-                  zIndex: 0,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 12,
+                  fontSize: 14.5,
+                  fontWeight: 700,
+                  letterSpacing: "0.09em",
+                  textTransform: "uppercase",
+                  color: "#ffffff",
+                  background: "linear-gradient(95deg, #12A39B 0%, #35BBA6 100%)",
+                  padding: "17px 34px",
+                  borderRadius: 100,
+                  boxShadow: "0 12px 26px -12px rgba(18,163,155,0.65)",
+                  ...linkReset,
                 }}
-              />
-              <HeroMockup />
+              >
+                {user ? "Go to dashboard" : "A calmer way to document"}
+                <IconArrow />
+              </Link>
+            </div>
+
+            <HeroVisual />
+          </Container>
+
+          {/* Assurance strip */}
+          <Container style={{ padding: "22px 32px 30px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
+              {/* Separate items rather than a non-breaking string: a run joined
+                  by &nbsp; cannot wrap and forces horizontal overflow on
+                  narrow screens. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13, fontWeight: 600, letterSpacing: "0.16em", color: "#5b6b80", textTransform: "uppercase" }}>
+                <span>Safe</span>
+                <span aria-hidden="true" style={{ color: "#c3d1dc" }}>|</span>
+                <span>Secure</span>
+                <span aria-hidden="true" style={{ color: "#c3d1dc" }}>|</span>
+                <span>Supporting a healthier NHS</span>
+              </div>
+              <p style={{ margin: 0, fontSize: 11.5, fontWeight: 600, letterSpacing: "0.12em", color: "#9aa7b5", textTransform: "uppercase", textAlign: "right", lineHeight: 1.7 }}>
+                NoteMD<br />A brighter day for healthcare
+              </p>
             </div>
           </Container>
+
+          <HeroWave />
         </Section>
 
         {/* TRUST / STAT STRIP */}
@@ -811,7 +1025,19 @@ const Landing = () => {
 
       {/* Responsive tweaks — the design is desktop-first; below is a small-screen fallback */}
       <style>{`
+        /* Hero: four pillars become two columns before the layout stacks. */
+        @media (max-width: 1100px) {
+          .landing-hero-pillars { grid-template-columns: 1fr 1fr !important; gap: 22px !important; }
+        }
         @media (max-width: 900px) {
+          .landing-hero-grid { grid-template-columns: 1fr !important; gap: 36px !important; }
+          .landing-hero-logo { height: 52px !important; max-width: 100%; object-fit: contain; }
+          /* The product window's fixed columns cannot shrink below their
+             content, which forced the page wider than the viewport. Drop the
+             decorative sidebar and badge rather than scaling text to nothing. */
+          .landing-app-window { grid-template-columns: minmax(0, 1fr) !important; }
+          .landing-app-sidebar { display: none !important; }
+          .landing-app-body { grid-template-columns: minmax(0, 1fr) !important; }
           .landing-nav a:not(:last-child) { display: none; }
           .landing-nav { gap: 16px; }
           section [style*="grid-template-columns: 1.05fr 0.95fr"],
