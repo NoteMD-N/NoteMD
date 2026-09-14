@@ -240,7 +240,7 @@ const Container: React.FC<
 // Leave it null and the hero falls back to the product window on a soft
 // clinical gradient, which is a finished look rather than a placeholder.
 // ---------------------------------------------------------------------------
-const HERO_PHOTO: string | null = null; // e.g. "/hero-clinician.jpg"
+const HERO_PHOTO: string | null = "/hero-clinician.jpg";
 
 /** The NoteMD interface as it appears on screen in the hero. */
 const HeroAppWindow = () => (
@@ -343,12 +343,20 @@ const HeroAppWindow = () => (
 
 /** Hero visual: the product window, over a photograph when one is supplied. */
 const HeroVisual = () => (
-  <div style={{ position: "relative", width: "100%" }}>
+  // minWidth: 0 — as a grid child this would otherwise refuse to shrink below
+  // its content width and overflow its column.
+  <div style={{ position: "relative", width: "100%", minWidth: 0 }}>
     <div
+      className="landing-hero-panel"
       style={{
         position: "relative",
         width: "100%",
-        minHeight: 380,
+        // With a photograph the aspect ratio sizes the panel; combining it with
+        // a min-height makes the browser derive WIDTH from that height and the
+        // panel grows past its column.
+        minHeight: HERO_PHOTO ? undefined : 380,
+        aspectRatio: HERO_PHOTO ? "16 / 10" : undefined,
+        boxShadow: HERO_PHOTO ? "0 30px 70px -34px rgba(12,37,69,0.45)" : undefined,
         borderRadius: 20,
         overflow: "hidden",
         background: HERO_PHOTO
@@ -368,10 +376,28 @@ const HeroVisual = () => (
         />
       )}
       {/* Softens the photograph so the product window stays legible over it. */}
+      {/* A light veil keeps the window legible without washing out the
+          clinician, who carries the warmth of the image. */}
       {HERO_PHOTO && (
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(110deg, rgba(255,255,255,0.82) 0%, rgba(255,255,255,0.35) 55%, rgba(255,255,255,0.08) 100%)" }} />
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(100deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.18) 40%, rgba(255,255,255,0.42) 100%)" }} />
       )}
-      <div style={{ position: "relative", width: "100%", maxWidth: 430 }}>
+      <div
+        className="landing-hero-screen"
+        style={
+          HERO_PHOTO
+            ? {
+                // Sits over the monitor in the photograph, so the interface
+                // reads as what the clinician is actually looking at.
+                position: "absolute",
+                right: "4%",
+                top: "50%",
+                transform: "translateY(-50%)",
+                width: "58%",
+                minWidth: 250,
+              }
+            : { position: "relative", width: "100%", maxWidth: 430 }
+        }
+      >
         <HeroAppWindow />
       </div>
     </div>
@@ -474,12 +500,12 @@ const Landing = () => {
             style={{
               padding: "0 32px 20px",
               display: "grid",
-              gridTemplateColumns: "1.02fr 0.98fr",
+              gridTemplateColumns: "minmax(0, 1.02fr) minmax(0, 0.98fr)",
               gap: 56,
               alignItems: "center",
             }}
           >
-            <div>
+            <div style={{ minWidth: 0 }}>
               <h1
                 style={{
                   fontFamily: "'Libre Franklin', sans-serif",
@@ -582,16 +608,16 @@ const Landing = () => {
         <Section style={{ borderTop: "1px solid #eef3f7", borderBottom: "1px solid #eef3f7", background: "#ffffff" }}>
           <Container style={{ padding: "36px 32px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 32 }}>
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 800, fontSize: 34, color: "#14315c", letterSpacing: "-0.02em" }}>Seconds</div>
-              <div style={{ fontSize: 15, color: "#5b6b80", marginTop: 4 }}>to a structured clinical note</div>
+              <div style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 800, fontSize: 34, color: "#14315c", letterSpacing: "-0.02em" }}>Structured notes</div>
+              <div style={{ fontSize: 15, color: "#5b6b80", marginTop: 4 }}>History, examination, assessment and plan</div>
             </div>
             <div style={{ textAlign: "center", borderLeft: "1px solid #eef3f7", borderRight: "1px solid #eef3f7" }}>
-              <div style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 800, fontSize: 34, color: "#14315c", letterSpacing: "-0.02em" }}>Less admin</div>
-              <div style={{ fontSize: 15, color: "#5b6b80", marginTop: 4 }}>more time for patient care</div>
+              <div style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 800, fontSize: 34, color: "#14315c", letterSpacing: "-0.02em" }}>You stay in control</div>
+              <div style={{ fontSize: 15, color: "#5b6b80", marginTop: 4 }}>Every letter is reviewed before use</div>
             </div>
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 800, fontSize: 34, color: "#14315c", letterSpacing: "-0.02em" }}>GDPR &amp; NHS</div>
-              <div style={{ fontSize: 15, color: "#5b6b80", marginTop: 4 }}>compliant by design</div>
+              <div style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 800, fontSize: 34, color: "#14315c", letterSpacing: "-0.02em" }}>Protected by design</div>
+              <div style={{ fontSize: 15, color: "#5b6b80", marginTop: 4 }}>EU-hosted, encrypted, retention limits</div>
             </div>
           </Container>
         </Section>
@@ -984,6 +1010,17 @@ const Landing = () => {
           .landing-app-window { grid-template-columns: minmax(0, 1fr) !important; }
           .landing-app-sidebar { display: none !important; }
           .landing-app-body { grid-template-columns: minmax(0, 1fr) !important; }
+          /* Overlaying the window on a phone would hide the photograph, so it
+             returns to sitting within the panel. */
+          .landing-hero-screen {
+            position: relative !important;
+            right: auto !important; top: auto !important;
+            transform: none !important;
+            width: 100% !important;
+          }
+          /* Stacked, the window is taller than 16:10 and a fixed ratio would
+             clip it — let the panel take its content height instead. */
+          .landing-hero-panel { aspect-ratio: auto !important; padding: 18px !important; }
           .landing-nav a:not(:last-child) { display: none; }
           .landing-nav { gap: 16px; }
           section [style*="grid-template-columns: 1.05fr 0.95fr"],
