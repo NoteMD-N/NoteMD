@@ -821,60 +821,6 @@ const Landing = () => {
           </Container>
         </Section>
 
-        {/* TESTIMONIALS */}
-        <Section id="testimonials" style={{ padding: "100px 0", background: "#ffffff" }}>
-          <Container>
-            <div style={{ maxWidth: 680, margin: "0 auto 52px", textAlign: "center" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#0c7d72", marginBottom: 16 }}>
-                Trusted by clinicians
-              </div>
-              <h2 style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 800, fontSize: "clamp(30px, 3.6vw, 42px)", lineHeight: 1.1, letterSpacing: "-0.02em", margin: 0, color: "#0c2545" }}>
-                What consultants are saying
-              </h2>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 22 }} className="landing-testimonial-grid">
-              {[
-                {
-                  quote: "Reduced my documentation time by over 70% and noticeably improved letter quality. A genuine game-changer for my clinic.",
-                  initials: "SM",
-                  bg: "#14315c",
-                  name: "Dr Sarah Mitchell",
-                  role: "Consultant Neurologist",
-                },
-                {
-                  quote: "The letters are structured perfectly and capture all the important clinical detail. It has transformed my workflow.",
-                  initials: "JO",
-                  bg: "#10a294",
-                  name: "Dr James O'Connor",
-                  role: "Consultant Physician",
-                },
-                {
-                  quote: "Excellent accuracy, easy to use and reassuringly secure. I wouldn't want to go back to working without it.",
-                  initials: "PP",
-                  bg: "#14315c",
-                  name: "Dr Priya Patel",
-                  role: "Consultant Psychiatrist",
-                },
-              ].map((t) => (
-                <div key={t.name} style={{ background: "#ffffff", border: "1px solid #e6edf3", borderRadius: 16, padding: 32, display: "flex", flexDirection: "column" }}>
-                  <div style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 800, fontSize: 40, lineHeight: 0.6, color: "#cfeae5" }}>“</div>
-                  <p style={{ fontSize: 17, lineHeight: 1.55, color: "#2a3d52", margin: "10px 0 24px", flex: 1 }}>{t.quote}</p>
-                  <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-                    <span style={{ width: 44, height: 44, borderRadius: "50%", background: t.bg, color: "#fff", fontFamily: "'Libre Franklin', sans-serif", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      {t.initials}
-                    </span>
-                    <div>
-                      <div style={{ fontSize: 15.5, fontWeight: 700, color: "#0c2545" }}>{t.name}</div>
-                      <div style={{ fontSize: 14, color: "#6b7c90" }}>{t.role}</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p style={{ fontSize: 13.5, color: "#9aa7b5", textAlign: "center", margin: "28px 0 0" }}>Illustrative testimonials — replace with your own client quotes.</p>
-          </Container>
-        </Section>
-
         {/* BUILT FOR MODERN HEALTHCARE */}
         <Section style={{ padding: "96px 0" }}>
           <Container maxWidth={880} style={{ textAlign: "center" }}>
@@ -1049,7 +995,6 @@ const Landing = () => {
           .landing-how-grid { grid-template-columns: 1fr !important; gap: 40px !important; }
           .landing-how-grid > div { border-left: 0 !important; border-right: 0 !important; }
           .landing-feature-grid { grid-template-columns: 1fr !important; }
-          .landing-testimonial-grid { grid-template-columns: 1fr !important; }
           section [style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
           section [style*="grid-template-columns: repeat(3, 1fr)"] { grid-template-columns: 1fr !important; }
         }
