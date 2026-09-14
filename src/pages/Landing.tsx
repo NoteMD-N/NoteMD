@@ -242,176 +242,148 @@ const Container: React.FC<
 // ---------------------------------------------------------------------------
 const HERO_PHOTO: string | null = "/hero-clinician.jpg";
 
-/** The NoteMD interface as it appears on screen in the hero. */
+/**
+ * The NoteMD interface as it appears on the monitor in the hero photograph.
+ *
+ * Everything is sized in em so the whole interface scales with one font-size.
+ * The wrapper sets that font-size in container-query units, so the interface
+ * fits the monitor at any viewport width without being clipped or needing
+ * breakpoint-specific sizes.
+ */
 const HeroAppWindow = () => (
   <div
     style={{
       width: "100%",
+      height: "100%",
       background: "#ffffff",
-      borderRadius: 14,
-      border: "1px solid #e3ebf2",
-      boxShadow: "0 24px 60px -28px rgba(12,37,69,0.35), 0 2px 8px rgba(12,37,69,0.06)",
-      overflow: "hidden",
       display: "grid",
-      gridTemplateColumns: "132px minmax(0, 1fr)",
-      fontSize: 11,
+      gridTemplateColumns: "7.4em minmax(0, 1fr)",
+      overflow: "hidden",
     }}
-    className="landing-app-window"
   >
     {/* Sidebar */}
-    <div style={{ background: "#f7fafc", borderRight: "1px solid #eef3f7", padding: "14px 10px" }} className="landing-app-sidebar">
-      {/* A small mark rather than the full lockup — the lockup carries a
-          tagline that is illegible at this size. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
-        <span style={{ width: 16, height: 16, borderRadius: 4, background: "#14315c", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <svg width="9" height="9" viewBox="0 0 24 24" fill="none">
+    <div style={{ background: "#f7fafc", borderRight: "0.06em solid #eef3f7", padding: "0.8em 0.55em" }} className="landing-app-sidebar">
+      <div style={{ display: "flex", alignItems: "center", gap: "0.35em", marginBottom: "0.9em" }}>
+        <span style={{ width: "0.95em", height: "0.95em", borderRadius: "0.22em", background: "#14315c", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <svg width="60%" height="60%" viewBox="0 0 24 24" fill="none">
             <path d="M20 6L9 17l-5-5" stroke="#4fd6c5" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </span>
-        <span style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 700, fontSize: 11, color: "#14315c", letterSpacing: "-0.01em" }}>NoteMD</span>
+        <span style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 700, fontSize: "0.62em", color: "#14315c" }}>NoteMD</span>
       </div>
       {[
-        { label: "Record", active: false },
-        { label: "Transcribe", active: false },
-        { label: "Generate Note", active: true },
-        { label: "Review", active: false },
-        { label: "Export", active: false },
-      ].map((item) => (
+        ["Record", false], ["Transcribe", false], ["Generate Note", true],
+        ["Review", false], ["Export", false],
+      ].map(([label, active]) => (
         <div
-          key={item.label}
+          key={label as string}
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 7,
-            padding: "6px 8px",
-            borderRadius: 6,
-            marginBottom: 3,
-            background: item.active ? "#e3f4f1" : "transparent",
-            color: item.active ? "#0c7d72" : "#6b7c90",
-            fontWeight: item.active ? 600 : 500,
+            display: "flex", alignItems: "center", gap: "0.4em",
+            padding: "0.34em 0.45em", borderRadius: "0.35em", marginBottom: "0.16em",
+            background: active ? "#e3f4f1" : "transparent",
+            color: active ? "#0c7d72" : "#6b7c90",
+            fontWeight: active ? 600 : 500, fontSize: "0.55em",
+            whiteSpace: "nowrap",
           }}
         >
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: item.active ? "#10a294" : "#c3d1dc" }} />
-          {item.label}
+          <span style={{ width: "0.35em", height: "0.35em", borderRadius: "50%", background: active ? "#10a294" : "#c3d1dc", flexShrink: 0 }} />
+          {label}
         </div>
       ))}
     </div>
 
     {/* Main panel */}
-    <div style={{ padding: "14px 16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontWeight: 700, color: "#0c2545", fontSize: 12 }}>Consultation</span>
-        <span style={{ color: "#9aa7b5", fontSize: 9.5 }}>AI draft — review before use</span>
+    <div style={{ padding: "0.8em 0.9em", minWidth: 0 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.55em", gap: "0.5em" }}>
+        <span style={{ fontWeight: 700, color: "#0c2545", fontSize: "0.68em", whiteSpace: "nowrap" }}>Consultation</span>
+        <span style={{ color: "#9aa7b5", fontSize: "0.46em", whiteSpace: "nowrap" }}>AI draft — review before use</span>
       </div>
 
-      {/* Player */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <span style={{ width: 20, height: 20, borderRadius: "50%", background: "#10a294", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <svg width="8" height="8" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z" /></svg>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.45em", marginBottom: "0.7em" }}>
+        <span style={{ width: "1.05em", height: "1.05em", borderRadius: "50%", background: "#10a294", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <svg width="45%" height="45%" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z" /></svg>
         </span>
-        <span style={{ flex: 1, height: 3, borderRadius: 2, background: "linear-gradient(90deg, #10a294 38%, #e3ebf2 38%)" }} />
-        <span style={{ color: "#9aa7b5", fontSize: 9, fontVariantNumeric: "tabular-nums" }}>00:12 / 24:08</span>
+        <span style={{ flex: 1, height: "0.16em", borderRadius: "0.1em", background: "linear-gradient(90deg, #10a294 38%, #e3ebf2 38%)" }} />
+        <span style={{ color: "#9aa7b5", fontSize: "0.46em", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>00:12 / 24:08</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 88px", gap: 12 }} className="landing-app-body">
-        <div>
-          <div style={{ fontWeight: 700, color: "#0c2545", marginBottom: 7, fontSize: 11 }}>Clinical Note</div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 4.6em", gap: "0.6em" }} className="landing-app-body">
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: "#0c2545", marginBottom: "0.4em", fontSize: "0.62em" }}>Clinical Note</div>
           {["History", "Examination", "Assessment", "Plan"].map((section, i) => (
-            <div key={section} style={{ marginBottom: 9 }}>
-              <div style={{ fontWeight: 600, color: "#0c7d72", fontSize: 9.5, marginBottom: 3 }}>{section}</div>
-              {/* Representative body copy, not real clinical content */}
+            <div key={section} style={{ marginBottom: "0.45em" }}>
+              <div style={{ fontWeight: 600, color: "#0c7d72", fontSize: "0.5em", marginBottom: "0.22em" }}>{section}</div>
               {Array.from({ length: i === 0 ? 2 : 1 }).map((_, j) => (
-                <div key={j} style={{ height: 3.5, borderRadius: 2, background: "#e8eef4", marginBottom: 3, width: j === 1 ? "72%" : "100%" }} />
+                <div key={j} style={{ height: "0.17em", borderRadius: "0.1em", background: "#e8eef4", marginBottom: "0.16em", width: j === 1 ? "72%" : "100%" }} />
               ))}
             </div>
           ))}
         </div>
 
-        {/* Outcome badge */}
-        <div style={{ background: "#eaf7f0", border: "1px solid #cfeadb", borderRadius: 9, padding: "10px 8px", textAlign: "center", alignSelf: "start" }}>
-          <span style={{ display: "inline-flex", width: 20, height: 20, borderRadius: "50%", border: "1.5px solid #1b7f4d", alignItems: "center", justifyContent: "center", marginBottom: 5 }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+        <div style={{ background: "#eaf7f0", border: "0.05em solid #cfeadb", borderRadius: "0.45em", padding: "0.5em 0.35em", textAlign: "center", alignSelf: "start" }}>
+          <span style={{ display: "inline-flex", width: "1em", height: "1em", borderRadius: "50%", border: "0.08em solid #1b7f4d", alignItems: "center", justifyContent: "center", marginBottom: "0.25em" }}>
+            <svg width="55%" height="55%" viewBox="0 0 24 24" fill="none">
               <path d="M20 6L9 17l-5-5" stroke="#1b7f4d" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </span>
-          <div style={{ fontSize: 9.5, fontWeight: 700, color: "#14603c", lineHeight: 1.3 }}>More time<br />for patients</div>
+          <div style={{ fontSize: "0.46em", fontWeight: 700, color: "#14603c", lineHeight: 1.25 }}>More time<br />for patients</div>
         </div>
       </div>
     </div>
   </div>
 );
 
-/** Hero visual: the product window, over a photograph when one is supplied. */
+/**
+ * Hero visual — the photograph with the interface rendered inside the monitor.
+ *
+ * The overlay is positioned as a percentage of the IMAGE, and the image is
+ * displayed at its natural aspect (width 100%, height auto) rather than
+ * object-fit: cover, which would crop unpredictably and let the interface
+ * drift off the screen. These figures were measured from the photograph by
+ * locating the flat screen region.
+ */
+const SCREEN = { left: "47.0%", top: "20.6%", width: "43.5%", height: "55.0%" };
+
 const HeroVisual = () => (
-  // minWidth: 0 — as a grid child this would otherwise refuse to shrink below
-  // its content width and overflow its column.
   <div style={{ position: "relative", width: "100%", minWidth: 0 }}>
-    <div
-      className="landing-hero-panel"
-      style={{
-        position: "relative",
-        width: "100%",
-        // With a photograph the aspect ratio sizes the panel; combining it with
-        // a min-height makes the browser derive WIDTH from that height and the
-        // panel grows past its column.
-        minHeight: HERO_PHOTO ? undefined : 380,
-        aspectRatio: HERO_PHOTO ? "16 / 10" : undefined,
-        boxShadow: HERO_PHOTO ? "0 30px 70px -34px rgba(12,37,69,0.45)" : undefined,
-        borderRadius: 20,
-        overflow: "hidden",
-        background: HERO_PHOTO
-          ? undefined
-          : "linear-gradient(150deg, #eaf3f9 0%, #f4f9fc 45%, #eef7f5 100%)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 26,
-      }}
-    >
-      {HERO_PHOTO && (
+    {HERO_PHOTO ? (
+      <>
         <img
           src={HERO_PHOTO}
-          alt="A clinician reviewing notes in NoteMD"
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+          alt="A clinician reviewing a consultation note in NoteMD"
+          style={{ display: "block", width: "100%", height: "auto" }}
         />
-      )}
-      {/* Softens the photograph so the product window stays legible over it. */}
-      {/* A light veil keeps the window legible without washing out the
-          clinician, who carries the warmth of the image. */}
-      {HERO_PHOTO && (
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(100deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.18) 40%, rgba(255,255,255,0.42) 100%)" }} />
-      )}
+        <div
+          className="landing-hero-screen"
+          style={{ position: "absolute", ...SCREEN, overflow: "hidden", containerType: "inline-size" }}
+        >
+          {/* The cqw font-size must sit on a CHILD of the container: an element
+              cannot query itself, and would otherwise resolve against the
+              viewport. One font-size scales the whole interface, so it fits
+              the monitor at any width. */}
+          <div style={{ width: "100%", height: "100%", fontSize: "4.4cqw" }}>
+            <HeroAppWindow />
+          </div>
+        </div>
+      </>
+    ) : (
       <div
-        className="landing-hero-screen"
-        style={
-          HERO_PHOTO
-            ? {
-                // Sits over the monitor in the photograph, so the interface
-                // reads as what the clinician is actually looking at.
-                position: "absolute",
-                right: "4%",
-                top: "50%",
-                transform: "translateY(-50%)",
-                width: "58%",
-                minWidth: 250,
-              }
-            : { position: "relative", width: "100%", maxWidth: 430 }
-        }
+        className="landing-hero-panel"
+        style={{
+          width: "100%",
+          aspectRatio: "1.42",
+          borderRadius: 20,
+          background: "linear-gradient(150deg, #eaf3f9 0%, #f4f9fc 45%, #eef7f5 100%)",
+          padding: 26,
+          containerType: "inline-size",
+          overflow: "hidden",
+        }}
       >
-        <HeroAppWindow />
+        <div style={{ width: "100%", height: "100%", fontSize: "3.4cqw" }}>
+          <HeroAppWindow />
+        </div>
       </div>
-    </div>
-
-    {/* Script accent, as in the brand artwork */}
-    <div style={{ textAlign: "right", marginTop: 14, paddingRight: 6 }}>
-      <span style={{ fontFamily: "'Caveat', cursive", fontSize: 30, lineHeight: 1.05, color: "#14315c", display: "block" }}>
-        Less typing.
-      </span>
-      <span style={{ fontFamily: "'Caveat', cursive", fontSize: 30, lineHeight: 1.05, color: "#14315c", display: "block" }}>
-        More caring.
-      </span>
-      <span style={{ display: "inline-block", width: 96, height: 2, background: "#10a294", borderRadius: 2, marginTop: 4 }} />
-    </div>
+    )}
   </div>
 );
 
@@ -579,11 +551,26 @@ const Landing = () => {
               </Link>
             </div>
 
-            <HeroVisual />
+            {/* The photograph runs off the right edge of the page, as in the
+                artwork. Percentages in margin resolve against the grid column,
+                not the page, so the offset is expressed in viewport units
+                against the container's half-width (1180 / 2 = 590px). */}
+            <div className="landing-hero-bleed" style={{ marginRight: "calc(-1 * (50vw - min(50vw, 590px)) - 32px)", minWidth: 0 }}>
+              <HeroVisual />
+            </div>
+          </Container>
+
+          {/* Script accent, as in the artwork */}
+          <Container style={{ padding: "10px 32px 0" }}>
+            <div style={{ textAlign: "right" }}>
+              <span style={{ fontFamily: "'Caveat', cursive", fontSize: 32, lineHeight: 1.02, color: "#14315c", display: "block" }}>Less typing.</span>
+              <span style={{ fontFamily: "'Caveat', cursive", fontSize: 32, lineHeight: 1.02, color: "#14315c", display: "block" }}>More caring.</span>
+              <span style={{ display: "inline-block", width: 100, height: 2, background: "#10a294", borderRadius: 2, marginTop: 5 }} />
+            </div>
           </Container>
 
           {/* Assurance strip */}
-          <Container style={{ padding: "22px 32px 30px" }}>
+          <Container style={{ padding: "18px 32px 30px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
               {/* Separate items rather than a non-breaking string: a run joined
                   by &nbsp; cannot wrap and forces horizontal overflow on
@@ -1012,15 +999,9 @@ const Landing = () => {
           .landing-app-body { grid-template-columns: minmax(0, 1fr) !important; }
           /* Overlaying the window on a phone would hide the photograph, so it
              returns to sitting within the panel. */
-          .landing-hero-screen {
-            position: relative !important;
-            right: auto !important; top: auto !important;
-            transform: none !important;
-            width: 100% !important;
-          }
-          /* Stacked, the window is taller than 16:10 and a fixed ratio would
-             clip it — let the panel take its content height instead. */
           .landing-hero-panel { aspect-ratio: auto !important; padding: 18px !important; }
+          /* Full width on a phone; the bleed offset would push it off-screen. */
+          .landing-hero-bleed { margin-right: 0 !important; }
           .landing-nav a:not(:last-child) { display: none; }
           .landing-nav { gap: 16px; }
           section [style*="grid-template-columns: 1.05fr 0.95fr"],
