@@ -240,165 +240,30 @@ const Container: React.FC<
 // Leave it null and the hero falls back to the product window on a soft
 // clinical gradient, which is a finished look rather than a placeholder.
 // ---------------------------------------------------------------------------
-const HERO_PHOTO: string | null = "/hero-clinician.jpg";
+const HERO_BANNER_WEBP = "/hero-banner.webp";
+const HERO_BANNER_JPG = "/hero-banner.jpg";
+/* The same artwork cropped to its photograph, for widths where the banner's
+   own lettering would be too small to read. */
+const HERO_BANNER_MOBILE_WEBP = "/hero-banner-mobile.webp";
+const HERO_BANNER_MOBILE_JPG = "/hero-banner-mobile.jpg";
+/* The hero banner is the largest contentful paint, so ask the browser to
+   fetch it first. React 18 does not map the camelCase prop, so the HTML
+   attribute is passed through directly. */
+const fetchHighPriority = { fetchpriority: "high" } as unknown as React.ImgHTMLAttributes<HTMLImageElement>;
 
-/**
- * The NoteMD interface as it appears on the monitor in the hero photograph.
- *
- * Everything is sized in em so the whole interface scales with one font-size.
- * The wrapper sets that font-size in container-query units, so the interface
- * fits the monitor at any viewport width without being clipped or needing
- * breakpoint-specific sizes.
- */
-const HeroAppWindow = () => (
-  <div
-    style={{
-      width: "100%",
-      height: "100%",
-      background: "#ffffff",
-      display: "grid",
-      gridTemplateColumns: "7.4em minmax(0, 1fr)",
-      overflow: "hidden",
-    }}
-  >
-    {/* Sidebar */}
-    <div style={{ background: "#f7fafc", borderRight: "0.06em solid #eef3f7", padding: "0.8em 0.55em" }} className="landing-app-sidebar">
-      <div style={{ display: "flex", alignItems: "center", gap: "0.35em", marginBottom: "0.9em" }}>
-        <span style={{ width: "0.95em", height: "0.95em", borderRadius: "0.22em", background: "#14315c", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <svg width="60%" height="60%" viewBox="0 0 24 24" fill="none">
-            <path d="M20 6L9 17l-5-5" stroke="#4fd6c5" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
-        <span style={{ fontFamily: "'Libre Franklin', sans-serif", fontWeight: 700, fontSize: "0.62em", color: "#14315c" }}>NoteMD</span>
-      </div>
-      {[
-        ["Record", false], ["Transcribe", false], ["Generate Note", true],
-        ["Review", false], ["Export", false],
-      ].map(([label, active]) => (
-        <div
-          key={label as string}
-          style={{
-            display: "flex", alignItems: "center", gap: "0.4em",
-            padding: "0.34em 0.45em", borderRadius: "0.35em", marginBottom: "0.16em",
-            background: active ? "#e3f4f1" : "transparent",
-            color: active ? "#0c7d72" : "#6b7c90",
-            fontWeight: active ? 600 : 500, fontSize: "0.55em",
-            whiteSpace: "nowrap",
-          }}
-        >
-          <span style={{ width: "0.35em", height: "0.35em", borderRadius: "50%", background: active ? "#10a294" : "#c3d1dc", flexShrink: 0 }} />
-          {label}
-        </div>
-      ))}
-    </div>
-
-    {/* Main panel */}
-    <div style={{ padding: "0.8em 0.9em", minWidth: 0 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.55em", gap: "0.5em" }}>
-        <span style={{ fontWeight: 700, color: "#0c2545", fontSize: "0.68em", whiteSpace: "nowrap" }}>Consultation</span>
-        <span style={{ color: "#9aa7b5", fontSize: "0.46em", whiteSpace: "nowrap" }}>AI draft — review before use</span>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: "0.45em", marginBottom: "0.7em" }}>
-        <span style={{ width: "1.05em", height: "1.05em", borderRadius: "50%", background: "#10a294", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <svg width="45%" height="45%" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z" /></svg>
-        </span>
-        <span style={{ flex: 1, height: "0.16em", borderRadius: "0.1em", background: "linear-gradient(90deg, #10a294 38%, #e3ebf2 38%)" }} />
-        <span style={{ color: "#9aa7b5", fontSize: "0.46em", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>00:12 / 24:08</span>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 4.6em", gap: "0.6em" }} className="landing-app-body">
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 700, color: "#0c2545", marginBottom: "0.4em", fontSize: "0.62em" }}>Clinical Note</div>
-          {["History", "Examination", "Assessment", "Plan"].map((section, i) => (
-            <div key={section} style={{ marginBottom: "0.45em" }}>
-              <div style={{ fontWeight: 600, color: "#0c7d72", fontSize: "0.5em", marginBottom: "0.22em" }}>{section}</div>
-              {Array.from({ length: i === 0 ? 2 : 1 }).map((_, j) => (
-                <div key={j} style={{ height: "0.17em", borderRadius: "0.1em", background: "#e8eef4", marginBottom: "0.16em", width: j === 1 ? "72%" : "100%" }} />
-              ))}
-            </div>
-          ))}
-        </div>
-
-        <div style={{ background: "#eaf7f0", border: "0.05em solid #cfeadb", borderRadius: "0.45em", padding: "0.5em 0.35em", textAlign: "center", alignSelf: "start" }}>
-          <span style={{ display: "inline-flex", width: "1em", height: "1em", borderRadius: "50%", border: "0.08em solid #1b7f4d", alignItems: "center", justifyContent: "center", marginBottom: "0.25em" }}>
-            <svg width="55%" height="55%" viewBox="0 0 24 24" fill="none">
-              <path d="M20 6L9 17l-5-5" stroke="#1b7f4d" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-          <div style={{ fontSize: "0.46em", fontWeight: 700, color: "#14603c", lineHeight: 1.25 }}>More time<br />for patients</div>
-        </div>
-      </div>
-    </div>
-  </div>
-);
-
-/**
- * Hero visual — the photograph with the interface rendered inside the monitor.
- *
- * The overlay is positioned as a percentage of the IMAGE, and the image is
- * displayed at its natural aspect (width 100%, height auto) rather than
- * object-fit: cover, which would crop unpredictably and let the interface
- * drift off the screen. These figures were measured from the photograph by
- * locating the flat screen region.
- */
-const SCREEN = { left: "47.0%", top: "20.6%", width: "43.5%", height: "55.0%" };
-
-const HeroVisual = () => (
-  <div style={{ position: "relative", width: "100%", minWidth: 0 }}>
-    {HERO_PHOTO ? (
-      <>
-        <img
-          src={HERO_PHOTO}
-          alt="A clinician reviewing a consultation note in NoteMD"
-          style={{ display: "block", width: "100%", height: "auto" }}
-        />
-        <div
-          className="landing-hero-screen"
-          style={{ position: "absolute", ...SCREEN, overflow: "hidden", containerType: "inline-size" }}
-        >
-          {/* The cqw font-size must sit on a CHILD of the container: an element
-              cannot query itself, and would otherwise resolve against the
-              viewport. One font-size scales the whole interface, so it fits
-              the monitor at any width. */}
-          <div style={{ width: "100%", height: "100%", fontSize: "4.4cqw" }}>
-            <HeroAppWindow />
-          </div>
-        </div>
-      </>
-    ) : (
-      <div
-        className="landing-hero-panel"
-        style={{
-          width: "100%",
-          aspectRatio: "1.42",
-          borderRadius: 20,
-          background: "linear-gradient(150deg, #eaf3f9 0%, #f4f9fc 45%, #eef7f5 100%)",
-          padding: 26,
-          containerType: "inline-size",
-          overflow: "hidden",
-        }}
-      >
-        <div style={{ width: "100%", height: "100%", fontSize: "3.4cqw" }}>
-          <HeroAppWindow />
-        </div>
-      </div>
-    )}
-  </div>
-);
-
-/** Soft wave closing the hero, matching the brand artwork. */
-const HeroWave = () => (
-  <svg
-    viewBox="0 0 1440 90"
-    preserveAspectRatio="none"
-    style={{ display: "block", width: "100%", height: 70, marginTop: -1 }}
-    aria-hidden="true"
-  >
-    <path d="M0 54C240 96 420 18 720 30s520 74 720 30v30H0z" fill="#eaf3f9" />
-    <path d="M0 66C260 102 440 40 720 48s520 62 720 26v16H0z" fill="#ffffff" />
-  </svg>
-);
+/** Available to assistive technology and search engines, invisible on screen. */
+const srOnly: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  margin: -1,
+  padding: 0,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
 
 // ---------- Page ----------
 const Landing = () => {
@@ -452,87 +317,87 @@ const Landing = () => {
       </header>
 
       <main id="top">
-        {/* HERO */}
-        <Section style={{ position: "relative", overflow: "hidden", background: "linear-gradient(170deg, #ffffff 0%, #f7fbfd 55%, #eef6fa 100%)" }}>
-          <Container style={{ padding: "40px 32px 8px" }}>
-            {/* Brand mark and positioning line, as in the brand artwork */}
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 24, flexWrap: "wrap", marginBottom: 30 }}>
-              <img src="/notemdcolor.png" alt="NoteMD — Clinical Documentation Solutions" style={{ height: 72, width: "auto", display: "block" }} className="landing-hero-logo" />
-              <div style={{ textAlign: "right", paddingTop: 6 }}>
-                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, letterSpacing: "0.1em", lineHeight: 1.7, color: "#14315c", textTransform: "uppercase" }}>
-                  Built for clinicians.<br />For a brighter tomorrow.
-                </p>
-                <span style={{ display: "inline-block", width: 72, height: 2, background: "#10a294", borderRadius: 2, marginTop: 8 }} />
-              </div>
-            </div>
+        {/* HERO — the client's supplied brand artwork, shipped as the banner
+            itself. Its text is part of the image, so the heading, subheading
+            and call to action are also present as real elements. On a wide
+            screen those read out to assistive technology and search engines
+            while the artwork carries the visible design; below tablet width
+            the whole 1774px composition would shrink its own lettering to a
+            few pixels, so there the banner crops to the photograph and the
+            real text takes over. */}
+        <section aria-label="NoteMD clinical documentation" style={{ background: "#ffffff" }}>
+          <Container className="landing-hero-text" style={srOnly}>
+            <img
+              src="/notemdcolor.png"
+              alt=""
+              className="landing-hero-text-logo"
+              style={{ display: "none", height: 46, width: "auto", marginBottom: 18 }}
+            />
+            <h1
+              className="landing-hero-h1"
+              style={{
+                fontFamily: "'Libre Franklin', sans-serif",
+                fontWeight: 800,
+                fontSize: "clamp(34px, 9vw, 44px)",
+                lineHeight: 1.05,
+                letterSpacing: "-0.03em",
+                margin: "0 0 14px",
+                color: "#14315c",
+              }}
+            >
+              More time<br />for what <span style={{ color: "#2E86C8" }}>matters.</span>
+            </h1>
+            <p style={{ fontSize: 17.5, lineHeight: 1.55, color: "#44566b", margin: 0, maxWidth: 540 }}>
+              AI-assisted clinical documentation to reduce admin, save time and
+              give you more time for your patients.
+            </p>
           </Container>
 
-          <Container
-            className="landing-hero-grid"
-            style={{
-              padding: "0 32px 20px",
-              display: "grid",
-              gridTemplateColumns: "minmax(0, 1.02fr) minmax(0, 0.98fr)",
-              gap: 56,
-              alignItems: "center",
-            }}
-          >
-            <div style={{ minWidth: 0 }}>
-              <h1
-                style={{
-                  fontFamily: "'Libre Franklin', sans-serif",
-                  fontWeight: 800,
-                  fontSize: "clamp(40px, 5.4vw, 64px)",
-                  lineHeight: 1.02,
-                  letterSpacing: "-0.03em",
-                  margin: "0 0 20px",
-                  color: "#14315c",
-                  textWrap: "balance",
-                }}
-              >
-                More time<br />for what <span style={{ color: "#2E86C8" }}>matters.</span>
-              </h1>
+          <div className="landing-hero-banner" style={{ position: "relative", width: "100%" }}>
+            <picture>
+              <source media="(max-width: 1100px)" srcSet={HERO_BANNER_MOBILE_WEBP} type="image/webp" />
+              <source media="(max-width: 1100px)" srcSet={HERO_BANNER_MOBILE_JPG} type="image/jpeg" />
+              <source srcSet={HERO_BANNER_WEBP} type="image/webp" />
+              <img
+                src={HERO_BANNER_JPG}
+                alt="A clinician at a workstation reviewing a NoteMD clinical note."
+                width={1774}
+                height={887}
+                {...fetchHighPriority}
+                decoding="async"
+                className="landing-hero-img"
+                style={{ display: "block", width: "100%", height: "auto" }}
+              />
+            </picture>
 
-              <p style={{ fontSize: 19.5, lineHeight: 1.55, color: "#44566b", margin: "0 0 32px", maxWidth: 470 }}>
-                AI-assisted clinical documentation to reduce admin, save time and
-                give you more time for your patients.
-              </p>
+            {/* Overlays the call to action drawn in the artwork. Coordinates
+                are percentages measured from the image, so the target tracks
+                the button at every width. */}
+            <Link
+              to={primaryHref}
+              aria-label={user ? "Go to dashboard" : "A calmer way to document — get started"}
+              className="landing-hero-hotspot"
+              style={{
+                position: "absolute",
+                left: "4.51%",
+                top: "79.26%",
+                width: "22.33%",
+                height: "6.32%",
+                borderRadius: 100,
+                ...linkReset,
+              }}
+            />
+          </div>
 
-              {/* Four pillars */}
-              <div className="landing-hero-pillars" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 18, marginBottom: 34 }}>
-                {[
-                  { icon: <IconClock />, title: "Save time", body: "From conversation to structured notes" },
-                  { icon: <IconLayers />, title: "Accurate & consistent", body: "High-quality clinical documentation" },
-                  { icon: <IconShield />, title: "Secure & compliant", body: "Built for NHS standards" },
-                  { icon: <IconPeople />, title: "For clinicians by clinicians", body: "Designed around real-world workflows" },
-                ].map((f) => (
-                  <div key={f.title}>
-                    <span
-                      style={{
-                        display: "flex",
-                        width: 42,
-                        height: 42,
-                        borderRadius: "50%",
-                        background: "#eaf2f8",
-                        color: "#14315c",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        marginBottom: 11,
-                      }}
-                    >
-                      {f.icon}
-                    </span>
-                    <p style={{ margin: "0 0 3px", fontSize: 14.5, fontWeight: 700, color: "#14315c", lineHeight: 1.25 }}>{f.title}</p>
-                    <p style={{ margin: 0, fontSize: 13, color: "#5b6b80", lineHeight: 1.4 }}>{f.body}</p>
-                  </div>
-                ))}
-              </div>
-
+          {/* Replaces the artwork's own button once that is cropped away. */}
+          <Container style={{ padding: "24px 24px 6px" }}>
+            <div className="landing-hero-cta" style={{ display: "none" }}>
               <Link
                 to={primaryHref}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
+                  justifyContent: "center",
                   gap: 12,
                   fontSize: 14.5,
                   fontWeight: 700,
@@ -540,7 +405,7 @@ const Landing = () => {
                   textTransform: "uppercase",
                   color: "#ffffff",
                   background: "linear-gradient(95deg, #12A39B 0%, #35BBA6 100%)",
-                  padding: "17px 34px",
+                  padding: "17px 30px",
                   borderRadius: 100,
                   boxShadow: "0 12px 26px -12px rgba(18,163,155,0.65)",
                   ...linkReset,
@@ -551,45 +416,64 @@ const Landing = () => {
               </Link>
             </div>
 
-            {/* The photograph runs off the right edge of the page, as in the
-                artwork. Percentages in margin resolve against the grid column,
-                not the page, so the offset is expressed in viewport units
-                against the container's half-width (1180 / 2 = 590px). */}
-            <div className="landing-hero-bleed" style={{ marginRight: "calc(-1 * (50vw - min(50vw, 590px)) - 32px)", minWidth: 0 }}>
-              <HeroVisual />
-            </div>
-          </Container>
+            {/* The four pillars and the assurance line are lettered into the
+                banner, which the mobile crop removes — so they are rebuilt
+                here as text at a readable size. */}
+            <div className="landing-hero-support" style={{ display: "none" }}>
+              <div className="landing-hero-support-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "22px 18px", marginTop: 30 }}>
+                {[
+                  { icon: <IconClock />, title: "Save time", body: "From conversation to structured notes" },
+                  { icon: <IconLayers />, title: "Accurate & consistent", body: "High-quality clinical documentation" },
+                  { icon: <IconShield />, title: "Secure & compliant", body: "Built for NHS standards" },
+                  { icon: <IconPeople />, title: "For clinicians by clinicians", body: "Designed around real-world workflows" },
+                ].map((f) => (
+                  <div key={f.title}>
+                    <span
+                      style={{
+                        display: "flex",
+                        width: 40,
+                        height: 40,
+                        borderRadius: "50%",
+                        background: "#eaf2f8",
+                        color: "#14315c",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        marginBottom: 10,
+                      }}
+                    >
+                      {f.icon}
+                    </span>
+                    <p style={{ margin: "0 0 3px", fontSize: 14.5, fontWeight: 700, color: "#14315c", lineHeight: 1.25 }}>{f.title}</p>
+                    <p style={{ margin: 0, fontSize: 13, color: "#5b6b80", lineHeight: 1.4 }}>{f.body}</p>
+                  </div>
+                ))}
+              </div>
 
-          {/* Script accent, as in the artwork */}
-          <Container style={{ padding: "10px 32px 0" }}>
-            <div style={{ textAlign: "right" }}>
-              <span style={{ fontFamily: "'Caveat', cursive", fontSize: 32, lineHeight: 1.02, color: "#14315c", display: "block" }}>Less typing.</span>
-              <span style={{ fontFamily: "'Caveat', cursive", fontSize: 32, lineHeight: 1.02, color: "#14315c", display: "block" }}>More caring.</span>
-              <span style={{ display: "inline-block", width: 100, height: 2, background: "#10a294", borderRadius: 2, marginTop: 5 }} />
-            </div>
-          </Container>
-
-          {/* Assurance strip */}
-          <Container style={{ padding: "18px 32px 30px" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
-              {/* Separate items rather than a non-breaking string: a run joined
-                  by &nbsp; cannot wrap and forces horizontal overflow on
-                  narrow screens. */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13, fontWeight: 600, letterSpacing: "0.16em", color: "#5b6b80", textTransform: "uppercase" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  marginTop: 28,
+                  paddingTop: 18,
+                  borderTop: "1px solid #eef3f7",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: "0.14em",
+                  color: "#5b6b80",
+                  textTransform: "uppercase",
+                }}
+              >
                 <span>Safe</span>
                 <span aria-hidden="true" style={{ color: "#c3d1dc" }}>|</span>
                 <span>Secure</span>
                 <span aria-hidden="true" style={{ color: "#c3d1dc" }}>|</span>
                 <span>Supporting a healthier NHS</span>
               </div>
-              <p style={{ margin: 0, fontSize: 11.5, fontWeight: 600, letterSpacing: "0.12em", color: "#9aa7b5", textTransform: "uppercase", textAlign: "right", lineHeight: 1.7 }}>
-                NoteMD<br />A brighter day for healthcare
-              </p>
             </div>
           </Container>
-
-          <HeroWave />
-        </Section>
+        </section>
 
         {/* TRUST / STAT STRIP */}
         <Section style={{ borderTop: "1px solid #eef3f7", borderBottom: "1px solid #eef3f7", background: "#ffffff" }}>
@@ -984,24 +868,38 @@ const Landing = () => {
 
       {/* Responsive tweaks — the design is desktop-first; below is a small-screen fallback */}
       <style>{`
-        /* Hero: four pillars become two columns before the layout stacks. */
+        /* Below this width the banner's baked-in lettering becomes too small
+           to read, so the artwork crops to its photograph and hands the words
+           back to real text. The photograph is a second crop of the same
+           artwork rather than a CSS crop: the banner's text panel and the
+           clinician overlap horizontally, so no object-position can remove
+           the one without cutting into the other. */
         @media (max-width: 1100px) {
-          .landing-hero-pillars { grid-template-columns: 1fr 1fr !important; gap: 22px !important; }
+          .landing-hero-text {
+            position: static !important;
+            width: auto !important;
+            height: auto !important;
+            margin: 0 !important;
+            padding: 30px 24px 22px !important;
+            overflow: visible !important;
+            clip: auto !important;
+            clip-path: none !important;
+            white-space: normal !important;
+          }
+          .landing-hero-text-logo { display: block !important; }
+          /* The mobile source has its own shape; state it so the space is
+             reserved correctly before the image loads. */
+          .landing-hero-img { aspect-ratio: 1154 / 887; }
+          .landing-hero-cta { display: flex !important; }
+          .landing-hero-support { display: block !important; }
+          .landing-hero-hotspot { display: none !important; }
+        }
+        /* On a phone the pillars pair up and the button spans the width. */
+        @media (max-width: 640px) {
+          .landing-hero-support-grid { grid-template-columns: 1fr 1fr !important; }
+          .landing-hero-cta a { width: 100%; }
         }
         @media (max-width: 900px) {
-          .landing-hero-grid { grid-template-columns: 1fr !important; gap: 36px !important; }
-          .landing-hero-logo { height: 52px !important; max-width: 100%; object-fit: contain; }
-          /* The product window's fixed columns cannot shrink below their
-             content, which forced the page wider than the viewport. Drop the
-             decorative sidebar and badge rather than scaling text to nothing. */
-          .landing-app-window { grid-template-columns: minmax(0, 1fr) !important; }
-          .landing-app-sidebar { display: none !important; }
-          .landing-app-body { grid-template-columns: minmax(0, 1fr) !important; }
-          /* Overlaying the window on a phone would hide the photograph, so it
-             returns to sitting within the panel. */
-          .landing-hero-panel { aspect-ratio: auto !important; padding: 18px !important; }
-          /* Full width on a phone; the bleed offset would push it off-screen. */
-          .landing-hero-bleed { margin-right: 0 !important; }
           .landing-nav a:not(:last-child) { display: none; }
           .landing-nav { gap: 16px; }
           section [style*="grid-template-columns: 1.05fr 0.95fr"],
