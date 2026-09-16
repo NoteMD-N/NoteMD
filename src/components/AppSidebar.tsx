@@ -45,7 +45,7 @@ const navItems = [
 ];
 
 const AppSidebar = () => {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
 
   const fullName = user?.user_metadata?.full_name || "User";
@@ -58,7 +58,7 @@ const AppSidebar = () => {
     .slice(0, 2);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    await signOut();
     navigate("/auth");
   };
 

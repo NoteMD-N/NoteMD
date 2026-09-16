@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { letterRoute } from "@/lib/letter-route";
+import { AUDIT_ACTIONS, logAudit } from "@/lib/audit";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,7 +74,16 @@ const Letters = () => {
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("letters").delete().eq("id", id);
-      if (error) throw error;
+      if (error) {
+        await logAudit({
+          action: AUDIT_ACTIONS.LETTER_DELETED,
+          resource: "letter",
+          resourceId: id,
+          outcome: "failure",
+        });
+        throw error;
+      }
+      await logAudit({ action: AUDIT_ACTIONS.LETTER_DELETED, resource: "letter", resourceId: id });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["letters-with-recordings"] });
@@ -84,9 +94,15 @@ const Letters = () => {
     },
   });
 
-  const handleCopy = (content: string | null) => {
+  const handleCopy = (content: string | null, id?: string) => {
     if (!content) return;
     navigator.clipboard.writeText(content);
+    void logAudit({
+      action: AUDIT_ACTIONS.LETTER_COPIED,
+      resource: "letter",
+      resourceId: id,
+      detail: { chars: content.length },
+    });
     toast.success("Copied to clipboard");
   };
 
@@ -196,7 +212,7 @@ const Letters = () => {
                             <Eye className="mr-2 h-4 w-4" />
                             View
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleCopy(letter.letter_content)}>
+                          <DropdownMenuItem onClick={() => handleCopy(letter.letter_content, letter.id)}>
                             <Copy className="mr-2 h-4 w-4" />
                             Copy
                           </DropdownMenuItem>
@@ -275,7 +291,7 @@ const Letters = () => {
                                 <Eye className="mr-2 h-4 w-4" />
                                 View
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleCopy(letter.letter_content)}>
+                              <DropdownMenuItem onClick={() => handleCopy(letter.letter_content, letter.id)}>
                                 <Copy className="mr-2 h-4 w-4" />
                                 Copy
                               </DropdownMenuItem>

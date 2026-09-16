@@ -237,10 +237,52 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      letter_usage_current_month: {
+        Row: {
+          user_id: string
+          letters_this_month: number
+        }
+        Relationships: []
+      }
     }
     Functions: {
-      [_ in never]: never
+      gdpr_find_patient_records: {
+        Args: { p_patient_id?: string | null; p_patient_name?: string | null }
+        Returns: {
+          recording_id: string | null
+          letter_id: string | null
+          patient_name: string | null
+          patient_id: string | null
+          created_at: string
+          status: string | null
+          has_audio: boolean
+          has_letter: boolean
+          transcript_chars: number
+        }[]
+      }
+      gdpr_export_patient: {
+        Args: { p_patient_id?: string | null; p_patient_name?: string | null }
+        Returns: Json
+      }
+      gdpr_erase_patient: {
+        Args: {
+          p_patient_id?: string | null
+          p_patient_name?: string | null
+          p_expected_count?: number | null
+        }
+        Returns: Json
+      }
+      log_audit_event: {
+        Args: {
+          p_action: string
+          p_resource?: string | null
+          p_resource_id?: string | null
+          p_subject_id?: string | null
+          p_outcome?: string | null
+          p_detail?: Json
+        }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never

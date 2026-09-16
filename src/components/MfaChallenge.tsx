@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { AUDIT_ACTIONS, logAudit } from "@/lib/audit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,8 +38,14 @@ const MfaChallenge = ({ onVerified }: { onVerified: () => void }) => {
         code: code.trim(),
       });
       if (error) throw error;
+      void logAudit({ action: AUDIT_ACTIONS.MFA_CHALLENGE_PASSED });
       onVerified();
     } catch (e: any) {
+      // The session exists at aal1 during the challenge, so this write is
+      // authenticated. Failures before any session — a wrong password — are
+      // recorded by GoTrue in auth.audit_log_entries; an unauthenticated
+      // client deliberately has no route into our own log.
+      void logAudit({ action: AUDIT_ACTIONS.MFA_CHALLENGE_FAILED, outcome: "failure" });
       toast.error(e?.message || "That code was not accepted. Try the next one.");
       setCode("");
     } finally {
@@ -47,6 +54,7 @@ const MfaChallenge = ({ onVerified }: { onVerified: () => void }) => {
   };
 
   const signOut = async () => {
+    await logAudit({ action: AUDIT_ACTIONS.LOGOUT, detail: { reason: "abandoned_mfa" } });
     await supabase.auth.signOut();
   };
 

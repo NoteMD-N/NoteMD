@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { AUDIT_ACTIONS, logAudit } from "@/lib/audit";
 import { letterRoute } from "@/lib/letter-route";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -79,6 +80,12 @@ const Recordings = () => {
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("recordings").delete().eq("id", id);
+      await logAudit({
+        action: AUDIT_ACTIONS.RECORDING_DELETED,
+        resource: "recording",
+        resourceId: id,
+        outcome: error ? "failure" : "success",
+      });
       if (error) throw error;
     },
     onSuccess: () => {

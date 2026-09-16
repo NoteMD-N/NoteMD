@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { letterIdFromHash } from "@/lib/letter-route";
 import { supabase } from "@/integrations/supabase/client";
+import { AUDIT_ACTIONS, logAudit } from "@/lib/audit";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -117,8 +118,23 @@ const LetterView = () => {
       .update({ letter_content: editedContent, status: "reviewed" })
       .eq("id", letter.id);
     if (error) {
+      void logAudit({
+        action: AUDIT_ACTIONS.LETTER_REVIEWED,
+        resource: "letter",
+        resourceId: letter.id,
+        outcome: "failure",
+      });
       toast.error("Failed to save");
     } else {
+      // The transition out of 'draft' is the clinician's explicit review, and
+      // is the point after which the letter may be exported or sent. It is
+      // the single most important event in the trail.
+      void logAudit({
+        action: AUDIT_ACTIONS.LETTER_REVIEWED,
+        resource: "letter",
+        resourceId: letter.id,
+        detail: { from_status: letter.status, to_status: "reviewed", edited: editedContent !== letter.letter_content },
+      });
       toast.success("Letter saved");
       setLetter({ ...letter, letter_content: editedContent, status: "reviewed" });
     }
@@ -127,6 +143,14 @@ const LetterView = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(editedContent);
+    // Copying the letter out of the application is an export of clinical
+    // content, so it is recorded as one.
+    void logAudit({
+      action: AUDIT_ACTIONS.LETTER_COPIED,
+      resource: "letter",
+      resourceId: letter?.id,
+      detail: { chars: editedContent.length, status: letter?.status ?? null },
+    });
     toast.success("Copied to clipboard");
   };
 
@@ -143,9 +167,23 @@ const LetterView = () => {
         return;
       }
       if (data?.error) throw new Error(data.error);
+      void logAudit({
+        action: AUDIT_ACTIONS.LETTER_EMAILED,
+        resource: "letter",
+        resourceId: letter.id,
+        detail: { recipients: data.sent_to?.length || 0, status: letter.status },
+      });
       toast.success(`Letter emailed to ${data.sent_to?.length || 0} recipient(s)`);
     } catch (err: any) {
       const msg = err.message || "Failed to send email";
+      void logAudit({
+        action: AUDIT_ACTIONS.LETTER_EMAIL_FAILED,
+        resource: "letter",
+        resourceId: letter.id,
+        outcome: "failure",
+        // The reason is a vendor error string, so only its shape is recorded.
+        detail: { reason_kind: msg.includes("No recipient") ? "no_recipients" : "send_error" },
+      });
       if (msg.includes("No recipient")) {
         toast.error("No recipients saved. Add addresses in Settings → Email.");
       } else {

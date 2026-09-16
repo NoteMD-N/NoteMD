@@ -1129,7 +1129,11 @@ const Record = () => {
       if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
 
       const { data, error } = await supabase.functions.invoke("transcribe-audio", {
-        body: { audio_path: fileName, engine: "accurate" },
+        body: {
+          audio_path: fileName,
+          engine: "accurate",
+          recording_id: autoDraftRecordingIdRef.current ?? null,
+        },
       });
       if (error) {
         let serverMessage = error.message;
@@ -1183,7 +1187,11 @@ const Record = () => {
         return;
       }
       const { data, error } = await supabase.functions.invoke("transcribe-audio", {
-        body: { audio_path: fileName, engine: "accurate" },
+        body: {
+          audio_path: fileName,
+          engine: "accurate",
+          recording_id: autoDraftRecordingIdRef.current ?? null,
+        },
       });
       if (error) {
         console.warn("[Segment] Transcribe failed:", error.message);

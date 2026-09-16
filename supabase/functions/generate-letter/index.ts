@@ -7,6 +7,7 @@ import {
   buildBatchUrl,
 } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { logAudit } from "../_shared/audit.ts";
 import { redactVendorError } from "../_shared/redact.ts";
 
 // ============================================================
@@ -84,6 +85,8 @@ function contentTypeFor(path: string): string {
 //
 //   OPENAI_API_BASE=https://eu.api.openai.com/v1
 // ---------------------------------------------------------------------------
+const LETTER_MODEL = Deno.env.get("OPENAI_LETTER_MODEL") || "gpt-4o";
+
 function openAiUrl(path: string): string {
   const base = (Deno.env.get("OPENAI_API_BASE") || "https://api.openai.com/v1").replace(/\/+$/, "");
   return `${base}/${path.replace(/^\/+/, "")}`;
@@ -816,7 +819,7 @@ The clinician remains entirely responsible for clinical content. Your role is do
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: LETTER_MODEL,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -861,6 +864,23 @@ The clinician remains entirely responsible for clinical content. Your role is do
       .single();
 
     if (letterError) throw letterError;
+
+    // The authoritative record that AI generated a draft. Note what is absent:
+    // no transcript, no letter text, no patient identifiers. The trail records
+    // that generation happened and against which record, not what was said.
+    await logAudit(supabase, {
+      action: "letter.generated",
+      resource: "letter",
+      resourceId: letter.id,
+      detail: {
+        recording_id,
+        model: LETTER_MODEL,
+        template_id: chosenTemplate?.id ?? null,
+        transcript_chars: transcript?.length ?? 0,
+        letter_chars: letterContent?.length ?? 0,
+        status: "draft",
+      },
+    });
 
     // Update recording status
     await supabase

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { AUDIT_ACTIONS, logAudit } from "@/lib/audit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -105,6 +106,7 @@ const TwoFactorSettings = () => {
         code: code.trim(),
       });
       if (error) throw error;
+      void logAudit({ action: AUDIT_ACTIONS.MFA_ENROLLED });
       toast.success("Two-factor authentication is on");
       setEnrolling(false);
       setQr(null); setSecret(null); setFactorId(null); setCode("");
@@ -123,6 +125,10 @@ const TwoFactorSettings = () => {
         const { error } = await supabase.auth.mfa.unenroll({ factorId: f.id });
         if (error) throw error;
       }
+      void logAudit({
+        action: AUDIT_ACTIONS.MFA_UNENROLLED,
+        detail: { factors_removed: factors.length },
+      });
       toast.success("Two-factor authentication turned off");
       await refresh();
     } catch (e: any) {

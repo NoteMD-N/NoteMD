@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveProvider, providerTier, buildBatchUrl } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { logAudit } from "../_shared/audit.ts";
 import { redactVendorError } from "../_shared/redact.ts";
 
 // GCP identity token (for private Cloud Run service auth)
@@ -210,6 +211,11 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Declared outside the try so a failure can still be recorded against the
+  // caller; it stays null until the request is authenticated.
+  let auditClient: ReturnType<typeof createClient> | null = null;
+  let auditRecordingId: string | null = null;
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -224,6 +230,7 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: authHeader } } }
     );
+    auditClient = supabase;
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
     if (userErr || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -232,8 +239,9 @@ serve(async (req) => {
       });
     }
 
-    const { audio_path, engine } = await req.json();
+    const { audio_path, engine, recording_id } = await req.json();
     if (!audio_path) throw new Error("audio_path is required");
+    auditRecordingId = recording_id ?? null;
 
     // Engine routing lives in _shared/transcription-policy.ts so it is unit
     // tested against the same code that runs here.
@@ -259,6 +267,15 @@ serve(async (req) => {
     // which path ran.
     console.log(`[transcribe-audio] provider=${provider} chars=${transcript.length}`);
 
+    // Length, not content. The provider tier is recorded rather than the
+    // vendor name, matching what the client is told.
+    await logAudit(supabase, {
+      action: "transcription.completed",
+      resource: "recording",
+      resourceId: auditRecordingId,
+      detail: { engine: providerTier(provider), transcript_chars: transcript.length },
+    });
+
     return new Response(
       JSON.stringify({
         transcript,
@@ -268,6 +285,15 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error("transcribe-audio error:", error);
+    if (auditClient) {
+      await logAudit(auditClient, {
+        action: "transcription.failed",
+        resource: "recording",
+        resourceId: auditRecordingId,
+        outcome: "failure",
+        detail: { stage: "transcribe" },
+      });
+    }
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

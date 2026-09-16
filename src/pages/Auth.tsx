@@ -174,7 +174,7 @@ const Auth = () => {
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  required={mode !== "reset"}
+                  required
                   minLength={6}
                   className="h-11"
                 />

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { logAudit } from "../_shared/audit.ts";
 import { redactVendorError } from "../_shared/redact.ts";
 
 serve(async (req) => {
@@ -104,14 +105,41 @@ serve(async (req) => {
     if (!resendResponse.ok) {
       const errText = await resendResponse.text();
       console.error("Resend error:", redactVendorError(errText));
+      await logAudit(supabase, {
+        action: "letter.email_failed",
+        resource: "letter",
+        resourceId: letter_id,
+        outcome: "failure",
+        detail: { provider: "resend", http_status: resendResponse.status, recipients: toList.length },
+      });
       throw new Error("Failed to send email. Please try again.");
     }
+
+    // Sending metadata only: sender, record, recipient count, outcome. The
+    // letter itself is not duplicated into the trail.
+    await logAudit(supabase, {
+      action: "letter.emailed",
+      resource: "letter",
+      resourceId: letter_id,
+      detail: {
+        provider: "resend",
+        recipients: toList.length,
+        status_before_send: letter.status ?? null,
+      },
+    });
 
     // Mark the letter as exported
     await supabase
       .from("letters")
       .update({ status: "exported" })
       .eq("id", letter_id);
+
+    await logAudit(supabase, {
+      action: "letter.exported",
+      resource: "letter",
+      resourceId: letter_id,
+      detail: { via: "email", status_before_send: letter.status ?? null },
+    });
 
     return new Response(
       JSON.stringify({ success: true, sent_to: toList }),
