@@ -244,6 +244,18 @@ const Record = () => {
   const segmentChunksRef = useRef<Blob[]>([]);
   const segmentTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const segmentInFlightRef = useRef(0);
+  /**
+   * Identifies the current recording session.
+   *
+   * Segment transcription is fire-and-forget and appends its result to the
+   * live transcript when it returns. The drain before the review screen gives
+   * up after 8 seconds, so a slow segment can still be in flight when the
+   * clinician moves on — and when it lands it would append one patient's
+   * spoken words to whatever transcript is current by then. Each segment
+   * captures this token when it starts and discards its result if the session
+   * has changed since.
+   */
+  const recordingSessionRef = useRef<string>("initial");
   // WebSocket reconnection state
   const pendingChunksRef = useRef<Blob[]>([]); // chunks captured during disconnect
   const reconnectAttemptRef = useRef(0);
@@ -668,6 +680,11 @@ const Record = () => {
   }, []);
 
   const attachWebSocketHandlers = useCallback((ws: WebSocket) => {
+    // The session this socket belongs to. A provider commonly emits one last
+    // final result as the stream closes, and the socket is not torn down until
+    // cleanup runs — so the same guard the segment path needs applies here.
+    const session = recordingSessionRef.current;
+
     ws.onmessage = (event) => {
       lastMessageAtRef.current = Date.now();
       try {
@@ -676,6 +693,8 @@ const Record = () => {
           const alt = msg.channel.alternatives[0];
           const text = alt.transcript;
           if (!text) return;
+
+          if (recordingSessionRef.current !== session) return;
 
           if (msg.is_final) {
             // Append to whatever is currently on screen so user edits during recording are preserved
@@ -866,6 +885,11 @@ const Record = () => {
     setIsStarting(true);
 
     try {
+      // A new consultation. Anything still in flight from the previous one
+      // belongs to a different patient and must not land in this transcript.
+      recordingSessionRef.current =
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
       setTranscript("");
       setInterimText("");
       transcriptRef.current = "";
@@ -1228,6 +1252,8 @@ const Record = () => {
   // nothing is lost.
   const transcribeSegmentAndAppend = useCallback(async (segmentBlob: Blob) => {
     if (segmentBlob.size < 2000) return; // too small to be real speech
+    // Captured now, checked before the result is used.
+    const session = recordingSessionRef.current;
     segmentInFlightRef.current += 1;
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -1253,6 +1279,13 @@ const Record = () => {
       }
       const text = ((data?.transcript || "") as string).trim();
       if (!text) return;
+      // The consultation this segment belongs to has ended and another has
+      // begun. Appending here would put one patient's words into another
+      // patient's transcript, and from there into their letter.
+      if (recordingSessionRef.current !== session) {
+        console.warn("[Segment] Discarded: the recording session changed while it was in flight.");
+        return;
+      }
       setTranscript((prev) => {
         const next = prev ? `${prev} ${text}` : text;
         transcriptRef.current = next;

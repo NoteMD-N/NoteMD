@@ -22,12 +22,12 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 4 | Identifier minimisation to AI providers | done | 0.6 d |
 | 2 | Azure Communication Services email | not started | — |
 | 6 | Draft/Reviewed workflow verification | done — F-001 found and closed | 0.5 d |
-| 7 | Wrong-patient / concurrency testing | not started | — |
+| 7 | Wrong-patient / concurrency testing | done — 2 defects found and fixed | 1.0 d |
 | 8 | Remaining security and configuration | mostly done — see below | 1.9 d |
 | 9 | Backups, recovery test, retention proposal | done — recovery test PASSED | 0.7 d |
 | 10 | Final documentation and evidence pack | not started | — |
 
-**Effort to date: 6.3 d**
+**Effort to date: 7.3 d**
 
 ---
 
@@ -72,6 +72,40 @@ self-assignable; an ordinary account could set it to `admin`.
 clinician's secretary, an account could log audit events attributed to that
 clinician. Closed by the same fix — the attempt is now recorded with
 `outcome = 'denied'` against the actor rather than the claimed subject.
+
+### F-007 — A late transcription result could land in the next patient's transcript
+
+**Severity: high (clinical safety).** Found 17 September 2026 during item 7.
+**Fixed.**
+
+Segment transcription is fire-and-forget: a ten-second slice of audio is
+uploaded, transcribed, and appended to the live transcript when it returns.
+The drain before the review screen waits for outstanding segments, but only
+for eight seconds, then proceeds.
+
+A slow segment could therefore still be in flight when the clinician had
+finished, generated the letter and started recording the next patient. When it
+landed it appended to whatever transcript was current: one patient's spoken
+words in another patient's transcript, and from there into their letter.
+
+Fixed with a session token rotated on each recording; a segment discards its
+result if the session changed while it was in flight. The same guard now
+applies to the streaming path, where a provider commonly emits a final result
+as the socket closes.
+
+### F-006 — Two consultations in different tabs overwrote each other
+
+**Severity: medium-high (data loss, wrong-patient recovery).** Found 17
+September 2026 during item 7. **Fixed.**
+
+The crash-recovery snapshot used one localStorage key per user, and that
+storage is shared by every tab. Two consultations open side by side wrote to
+the same slot every three seconds: one session was lost, and the survivor
+could be offered back in the other tab under a different patient's name.
+
+Fixed by naming slots per tab via a sessionStorage identifier, with a fallback
+so a closed tab's snapshot is still recoverable, labelled as coming from
+another session.
 
 ### F-005 — Rejected database writes wrote patient data into server logs
 
