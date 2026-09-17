@@ -14,8 +14,11 @@
 #   ./scripts/db-push.sh staging --dry-run
 #
 # The database password is read from the environment, never from the repo:
-#   export SUPABASE_DB_PASSWORD_STAGING=...
-#   export SUPABASE_DB_PASSWORD_PRODUCTION=...
+#   export SUPABASE_DB_PASSWORD_STAGING='...'
+#   export SUPABASE_DB_PASSWORD_PRODUCTION='...'
+#
+# Find it at: Supabase Dashboard -> Settings -> Database -> Database password.
+# It is only displayed at creation; use "Reset database password" if unknown.
 #
 set -euo pipefail
 
@@ -44,7 +47,18 @@ esac
 
 if [[ -z "$PASSWORD" ]]; then
   echo "error: \$$PASSWORD_VAR is not set." >&2
-  echo "       Export it for this shell only; do not add it to a file in the repo." >&2
+  echo "       Export it for this shell only; do not add it to a file in the repo:" >&2
+  echo "         export $PASSWORD_VAR='your-real-password'" >&2
+  exit 78
+fi
+
+# Catch the placeholder being pasted verbatim out of a command example. The
+# CLI's own error for this is a URL parse failure, which does not point at the
+# actual mistake.
+if [[ "$PASSWORD" == *"<"* || "$PASSWORD" == *">"* ]]; then
+  echo "error: \$$PASSWORD_VAR still contains a placeholder, not a password." >&2
+  echo "       Value starts: ${PASSWORD:0:12}..." >&2
+  echo "       Get the real one from Supabase Dashboard -> Settings -> Database." >&2
   exit 78
 fi
 
@@ -62,11 +76,18 @@ if [[ "$ENVIRONMENT" == "production" ]]; then
   fi
 fi
 
-DB_URL="postgresql://postgres.${REF}:${PASSWORD}@aws-0-eu-west-1.pooler.supabase.com:5432/postgres"
+# Let the CLI resolve the connection itself rather than assembling a URL here.
+# Building one by hand meant guessing the pooler hostname per region, and broke
+# outright on any password containing @ / : or #, which are legal in a Supabase
+# password but need percent-encoding inside a URL. The CLI reads
+# SUPABASE_DB_PASSWORD natively and handles both.
+export SUPABASE_DB_PASSWORD="$PASSWORD"
+
+echo "==> Linking to ${ENVIRONMENT} (${REF})"
+supabase link --project-ref "$REF" >/dev/null
 
 echo "==> Applying migrations to ${ENVIRONMENT} (${REF})"
-# --db-url addresses the project directly, so the run does not depend on
-# whichever project the CLI happens to be linked to.
-supabase db push --db-url "$DB_URL" "$@"
+supabase db push "$@"
 
 echo "==> Done. Migrations in supabase/migrations are now applied to ${ENVIRONMENT}."
+echo "    The CLI is now linked to ${ENVIRONMENT}; re-run this script to switch."
