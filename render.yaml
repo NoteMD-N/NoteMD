@@ -1,18 +1,22 @@
-# Render Blueprint — belt-and-braces SPA config.
+# Render Blueprint — SPA config and security headers.
 #
 # The `_redirects` file in public/ handles SPA routing on Render Static Sites
 # that were created from the dashboard. This Blueprint definition covers the
 # case where the service was created as something else (Web Service / Docker),
 # or where the dashboard-configured rewrite rules were removed.
 #
-# If the existing Render service was created manually in the dashboard, this
-# file has NO effect on it — Render only reads render.yaml on the initial
-# Blueprint deploy. In that case, set the rewrite in the dashboard:
-#   Static Site → Redirects/Rewrites → Add rule:
-#     Source path:      /*
-#     Destination path: /index.html
-#     Action:           Rewrite
-#     (NOT "Redirect" — that returns a 301 and breaks React Router.)
+# IMPORTANT: if the existing Render service was created manually in the
+# dashboard, Render only reads render.yaml on the initial Blueprint deploy, so
+# this file has NO effect on it. The headers below must then be entered under
+# Static Site → Settings → Headers. docs/SECURITY-HEADERS.md carries the same
+# values in copy-paste form for that.
+#
+# Static Site, not Web Service: a Web Service runs a process that terminates
+# every request and could therefore observe or log request bodies, headers and
+# tokens. A Static Site cannot, which is what makes the assurance statement
+# "Render is static frontend hosting only and receives no clinical request
+# bodies, audio, transcripts, letters or authentication tokens" true
+# architecturally rather than by policy.
 
 services:
   - type: web
@@ -27,3 +31,77 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20
+    headers:
+      # ---------------------------------------------------------------------
+      # Content Security Policy
+      #
+      # script-src is 'self' with no 'unsafe-inline' and no 'unsafe-eval': the
+      # production build emits a single module script and no inline script, so
+      # the strictest useful value is achievable. This is the directive that
+      # actually constrains XSS.
+      #
+      # style-src needs 'unsafe-inline' because the application styles through
+      # React's style prop, which produces inline style attributes. That is a
+      # far weaker concern than script injection.
+      #
+      # connect-src names api.eu.deepgram.com and deliberately does NOT name
+      # api.deepgram.com. The browser streams consultation audio straight to
+      # Deepgram, so this makes the EU residency commitment enforceable in the
+      # browser: if anything ever pointed the stream at the global endpoint,
+      # the connection would be refused rather than silently leaving the EEA.
+      # ---------------------------------------------------------------------
+      - path: /*
+        name: Content-Security-Policy
+        value: >-
+          default-src 'self';
+          script-src 'self';
+          style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+          font-src 'self' data: https://fonts.gstatic.com;
+          img-src 'self' data: blob: https://*.supabase.co;
+          media-src 'self' blob: https://*.supabase.co;
+          connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.eu.deepgram.com wss://api.eu.deepgram.com;
+          worker-src 'self' blob:;
+          object-src 'none';
+          base-uri 'self';
+          form-action 'self';
+          frame-ancestors 'none';
+          upgrade-insecure-requests
+
+      # Two years, subdomains included, preload-eligible. Patient-identifiable
+      # traffic must never be attempted over plaintext HTTP.
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=63072000; includeSubDomains; preload
+
+      # Belt and braces with frame-ancestors, for older browsers.
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+
+      # Referrers are suppressed cross-origin. Letter identifiers live in the
+      # URL fragment, which is never sent in a Referer header, but this keeps
+      # any future path segment from leaking to a third party too.
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+
+      # The microphone is required for dictation and is granted to this origin
+      # only. Everything else the platform exposes is switched off.
+      - path: /*
+        name: Permissions-Policy
+        value: >-
+          microphone=(self), camera=(), geolocation=(), payment=(),
+          usb=(), magnetometer=(), gyroscope=(), accelerometer=(),
+          display-capture=(), interest-cohort=()
+
+      - path: /*
+        name: Cross-Origin-Opener-Policy
+        value: same-origin
+
+      - path: /*
+        name: Cross-Origin-Resource-Policy
+        value: same-origin
