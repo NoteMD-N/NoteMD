@@ -54,6 +54,6 @@ export async function logAudit(client: RpcClient, event: EdgeAuditEvent): Promis
     });
     if (error) console.warn(`[audit] write failed: ${event.action}: ${error.message}`);
   } catch (err) {
-    console.warn(`[audit] write threw: ${event.action}`, err);
+    console.warn(`[audit] write threw: ${event.action}: ${redactError(err)}`);
   }
 }

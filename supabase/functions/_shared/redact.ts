@@ -52,3 +52,58 @@ export function redactVendorError(body: string | null | undefined): string {
     return `(non-JSON response, ${raw.length} chars)`;
   }
 }
+
+
+/**
+ * Redaction for a caught exception before it reaches the logs.
+ *
+ * `console.error("...", error)` looks harmless and is not. A PostgrestError
+ * from a failed insert carries a `details` field, and on a constraint
+ * violation Postgres fills that with the offending row:
+ *
+ *   details: "Failing row contains (uuid, user-uuid, 'Jane Smith',
+ *             'NHS4857773456', 'Patient presents with chest pain...', ...)."
+ *
+ * So a rejected letter insert would write the patient's name, NHS number and
+ * transcript into retained server logs. `details` and `hint` are therefore
+ * dropped outright rather than truncated, and the message is capped because a
+ * thrown Error can carry anything the thrower put in it.
+ */
+export function redactError(err: unknown): string {
+  if (err === null || err === undefined) return "(no error object)";
+
+  if (typeof err === "object") {
+    const e = err as Record<string, unknown>;
+    const parts: string[] = [];
+
+    // Postgres / PostgREST identifiers are fixed vocabularies, never content.
+    for (const field of ["name", "code", "status", "statusCode"]) {
+      const v = e[field];
+      if (typeof v === "string" || typeof v === "number") parts.push(`${field}=${v}`);
+    }
+
+    const message = e.message;
+    if (typeof message === "string" && message) {
+      const trimmed = message.length > MAX_MESSAGE_CHARS
+        ? `${message.slice(0, MAX_MESSAGE_CHARS)}…[truncated]`
+        : message;
+      parts.push(`message="${trimmed}"`);
+    }
+
+    // Deliberately not logged: details, hint, body, response, config, request.
+    // `details` is where Postgres puts the failing row.
+    if (typeof e.details === "string" && e.details) {
+      parts.push(`details=[redacted ${e.details.length} chars]`);
+    }
+
+    return parts.length ? parts.join(" ") : `(${Object.prototype.toString.call(err)})`;
+  }
+
+  if (typeof err === "string") {
+    return err.length > MAX_MESSAGE_CHARS
+      ? `"${err.slice(0, MAX_MESSAGE_CHARS)}…[truncated]"`
+      : `"${err}"`;
+  }
+
+  return `(${typeof err})`;
+}

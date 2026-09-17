@@ -9,7 +9,7 @@ import {
 import { corsHeaders } from "../_shared/cors.ts";
 import { logAudit } from "../_shared/audit.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
-import { redactVendorError } from "../_shared/redact.ts";
+import { redactVendorError, redactError } from "../_shared/redact.ts";
 
 // ============================================================
 // GCP identity token (for Cloud Run private service auth)
@@ -397,7 +397,7 @@ serve(async (req) => {
                 : await transcribeConsultation(audioData, audio_path);
             console.log(`[generate-letter] Server transcription succeeded (${transcript.length} chars)`);
           } catch (err) {
-            console.error("[generate-letter] Server transcription failed:", err);
+            console.error("[generate-letter] Server transcription failed:", redactError(err));
             // If the user has an on-screen transcript (e.g. live capture before a disconnect),
             // use it as a fallback so the doctor never ends up with a blank letter.
             if (clientTranscript) {
@@ -915,7 +915,7 @@ The clinician remains entirely responsible for clinical content. Your role is do
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("generate-letter error:", error);
+    console.error("generate-letter error:", redactError(error));
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

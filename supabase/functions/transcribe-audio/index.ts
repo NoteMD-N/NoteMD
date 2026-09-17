@@ -4,7 +4,7 @@ import { resolveProvider, providerTier, buildBatchUrl } from "../_shared/transcr
 import { corsHeaders } from "../_shared/cors.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { logAudit } from "../_shared/audit.ts";
-import { redactVendorError } from "../_shared/redact.ts";
+import { redactVendorError, redactError } from "../_shared/redact.ts";
 
 // GCP identity token (for private Cloud Run service auth)
 async function getGcpIdentityToken(serviceAccountKey: string, targetAudience: string): Promise<string> {
@@ -293,7 +293,7 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("transcribe-audio error:", error);
+    console.error("transcribe-audio error:", redactError(error));
     if (auditClient) {
       await logAudit(auditClient, {
         action: "transcription.failed",

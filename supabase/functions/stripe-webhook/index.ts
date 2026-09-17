@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@14.21.0?target=deno";
 import { corsHeaders } from "../_shared/cors.ts";
+import { redactError } from "../_shared/redact.ts";
 
 // Pull current_period_end across Stripe API versions:
 //   - Older (<= 2024-04): subscription.current_period_end (number, seconds)
@@ -46,7 +47,7 @@ serve(async (req) => {
       httpClient: Stripe.createFetchHttpClient(),
     });
   } catch (e) {
-    console.error("[stripe-webhook] Stripe SDK init failed:", e);
+    console.error("[stripe-webhook] Stripe SDK init failed:", redactError(e));
     return ack(); // ack to avoid retry storms
   }
 
@@ -61,7 +62,7 @@ serve(async (req) => {
   try {
     event = await stripe.webhooks.constructEventAsync(body, signature, WEBHOOK_SECRET);
   } catch (err) {
-    console.error("[stripe-webhook] Signature verification failed:", err);
+    console.error("[stripe-webhook] Signature verification failed:", redactError(err));
     return new Response("Bad signature", { status: 400 });
   }
 
@@ -85,7 +86,7 @@ serve(async (req) => {
         .maybeSingle();
 
       if (profileErr) {
-        console.error(`[stripe-webhook] Profile lookup error for ${customerId}:`, profileErr);
+        console.error(`[stripe-webhook] Profile lookup error for ${customerId}:`, redactError(profileErr));
         return;
       }
       if (!profile) {
@@ -113,12 +114,12 @@ serve(async (req) => {
         .from("subscriptions")
         .upsert(payload, { onConflict: "user_id" });
       if (upsertErr) {
-        console.error("[stripe-webhook] Subscription upsert failed:", upsertErr);
+        console.error("[stripe-webhook] Subscription upsert failed:", redactError(upsertErr));
       } else {
         console.log(`[stripe-webhook] Synced ${subscription.id} for ${profile.user_id}: plan=${plan} status=${status}`);
       }
     } catch (e) {
-      console.error("[stripe-webhook] syncSubscription threw:", e);
+      console.error("[stripe-webhook] syncSubscription threw:", redactError(e));
     }
   }
 
@@ -134,7 +135,7 @@ serve(async (req) => {
             const sub = await stripe.subscriptions.retrieve(subId);
             await syncSubscription(sub);
           } catch (e) {
-            console.error(`[stripe-webhook] Failed to retrieve subscription ${subId}:`, e);
+            console.error(`[stripe-webhook] Failed to retrieve subscription ${subId}:`, redactError(e));
           }
         }
         break;
@@ -150,7 +151,7 @@ serve(async (req) => {
     }
   } catch (e) {
     // Last-resort catch — log and ack so Stripe stops retrying.
-    console.error(`[stripe-webhook] Top-level handler error for ${event.type}:`, e);
+    console.error(`[stripe-webhook] Top-level handler error for ${event.type}:`, redactError(e));
   }
 
   return ack();

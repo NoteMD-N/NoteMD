@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildStreamingUrl, isEuResidentStreamingHost, hasPrivacyOptOut } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { redactError } from "../_shared/redact.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 
 serve(async (req) => {
@@ -74,7 +75,7 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("deepgram-token error:", error);
+    console.error("deepgram-token error:", redactError(error));
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

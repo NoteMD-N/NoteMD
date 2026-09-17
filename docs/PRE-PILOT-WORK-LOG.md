@@ -23,11 +23,11 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 2 | Azure Communication Services email | not started | — |
 | 6 | Draft/Reviewed workflow verification | done — F-001 found and closed | 0.5 d |
 | 7 | Wrong-patient / concurrency testing | not started | — |
-| 8 | Remaining security and configuration | not started | — |
+| 8 | Remaining security and configuration | mostly done — see below | 1.9 d |
 | 9 | Backups, recovery test, retention proposal | not started | — |
 | 10 | Final documentation and evidence pack | not started | — |
 
-**Effort to date: 3.1 d**
+**Effort to date: 5.0 d**
 
 ---
 
@@ -72,6 +72,30 @@ self-assignable; an ordinary account could set it to `admin`.
 clinician's secretary, an account could log audit events attributed to that
 clinician. Closed by the same fix — the attempt is now recorded with
 `outcome = 'denied'` against the actor rather than the claimed subject.
+
+### F-005 — Rejected database writes wrote patient data into server logs
+
+**Severity: high.** Found 17 September 2026 during the log review. **Fixed.**
+
+Every edge function ended with `console.error("<name> error:", error)`. That
+reads as harmless. `supabase-js` surfaces a Postgres failure as a
+`PostgrestError` carrying a `details` field, and on a constraint violation
+Postgres fills it with the rejected row:
+
+    details: "Failing row contains (b1f2, 9c3a, 'Jane Smith', 'NHS4857773456',
+              'Patient presents with chest pain radiating to...', draft)."
+
+So a rejected letter insert wrote the patient's name, NHS number and
+transcript into retained server logs, from a line whose author was logging
+"the error".
+
+Not hypothetical here: a `recordings.status` CHECK constraint mismatch caused
+exactly this class of rejection earlier in the project, repeatedly, in
+production.
+
+Fixed with `redactError()`, which drops `details` and `hint` outright and caps
+the message. All 42 logging call sites now route through it, enforced by
+`src/test/log-hygiene.test.ts`. Evidence in `docs/evidence/log-hygiene.md`.
 
 ### F-001 — A draft letter can be emailed and exported without clinician review
 

@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTemplateSelection } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
-import { redactVendorError } from "../_shared/redact.ts";
+import { redactVendorError, redactError } from "../_shared/redact.ts";
 
 // ---------------------------------------------------------------------------
 // OpenAI endpoint base.
@@ -244,7 +244,7 @@ revised letter.`
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("regenerate-letter error:", error);
+    console.error("regenerate-letter error:", redactError(error));
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

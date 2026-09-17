@@ -12,7 +12,7 @@ import { logAudit } from "../_shared/audit.ts";
  * that has already gone out is still possible.
  */
 const APPROVED_FOR_SEND = ["reviewed", "exported"];
-import { redactVendorError } from "../_shared/redact.ts";
+import { redactVendorError, redactError } from "../_shared/redact.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -195,7 +195,7 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("send-letter-email error:", error);
+    console.error("send-letter-email error:", redactError(error));
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

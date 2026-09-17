@@ -84,7 +84,7 @@ export async function checkRateLimit(
       limit,
     };
   } catch (err) {
-    console.warn(`[rate-limit] ${bucket}: check threw, allowing`, err);
+    console.warn(`[rate-limit] ${bucket}: check threw, allowing: ${redactError(err)}`);
     return { allowed: true, remaining: limit, resetAt: null, limit };
   }
 }

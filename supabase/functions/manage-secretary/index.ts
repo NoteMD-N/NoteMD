@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { redactError } from "../_shared/redact.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 
 serve(async (req) => {
@@ -107,7 +108,7 @@ serve(async (req) => {
 
     throw new Error("Unknown action");
   } catch (error) {
-    console.error("manage-secretary error:", error);
+    console.error("manage-secretary error:", redactError(error));
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

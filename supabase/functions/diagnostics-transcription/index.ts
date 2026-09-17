@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { redactError } from "../_shared/redact.ts";
 import {
   buildBatchUrlForHost,
   hasPrivacyOptOut,
@@ -110,7 +111,7 @@ async function probeStreaming(host: string, apiKey: string, wav: Uint8Array): Pr
       privacy_opt_out: hasPrivacyOptOut(endpoint),
     };
   } catch (e) {
-    console.error(`[diagnostics] probe failed for ${host}:`, e);
+    console.error(`[diagnostics] probe failed for ${host}:`, redactError(e));
     return {
       endpoint: host,
       reachable: false,
@@ -217,7 +218,7 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    console.error("diagnostics-transcription error:", error);
+    console.error("diagnostics-transcription error:", redactError(error));
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
