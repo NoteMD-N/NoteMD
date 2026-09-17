@@ -31,6 +31,71 @@ function keyFor(userId: string, name: string): string {
   return `${PHI_KEY_PREFIX}${userId}.${name}`;
 }
 
+/**
+ * A stable identifier for this browser tab.
+ *
+ * localStorage is shared by every tab on the origin, so a snapshot slot named
+ * only after the user is a single slot that all tabs write to. Two
+ * consultations open side by side would overwrite each other's recovery data,
+ * losing one of them and offering the other back under the wrong patient.
+ *
+ * sessionStorage is per tab and survives a reload — which is exactly the
+ * lifetime a tab identifier needs. It does not survive the tab closing, which
+ * is why orphaned slots are still discoverable by user (see listPhiSlots) and
+ * why snapshots expire.
+ */
+const TAB_ID_KEY = "notemd.tab-id";
+
+export function tabId(): string {
+  try {
+    let id = sessionStorage.getItem(TAB_ID_KEY);
+    if (!id) {
+      id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      sessionStorage.setItem(TAB_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    // Private mode or storage disabled: a per-load identifier still keeps two
+    // concurrent tabs apart for as long as they are open.
+    return "no-storage";
+  }
+}
+
+/**
+ * Every slot this user has written whose name starts with `prefix`, newest
+ * first, paired with the slot name so the caller can clear the right one.
+ *
+ * Used to find a snapshot left behind by a tab that has since closed — its
+ * sessionStorage is gone, so it can no longer be found by tab id.
+ */
+export function listPhiSlots<T extends { savedAt?: number }>(
+  userId: string,
+  prefix: string,
+): { slot: string; value: T }[] {
+  if (!userId) return [];
+  const out: { slot: string; value: T }[] = [];
+  try {
+    const keyPrefix = `${PHI_KEY_PREFIX}${userId}.${prefix}`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(keyPrefix)) continue;
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        out.push({
+          slot: key.slice(`${PHI_KEY_PREFIX}${userId}.`.length),
+          value: JSON.parse(raw) as T,
+        });
+      } catch {
+        /* corrupt entry — skip */
+      }
+    }
+  } catch {
+    return [];
+  }
+  return out.sort((a, b) => (b.value.savedAt ?? 0) - (a.value.savedAt ?? 0));
+}
+
 export function readPhi<T>(userId: string, name: string): T | null {
   if (!userId) return null;
   try {

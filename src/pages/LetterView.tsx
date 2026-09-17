@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { letterIdFromHash } from "@/lib/letter-route";
 import { supabase } from "@/integrations/supabase/client";
@@ -173,8 +173,16 @@ const LetterView = () => {
     toast.success("Copied to clipboard");
   };
 
+  // Checked and set synchronously on click, so it holds even if React has not
+  // re-rendered the disabled button between two fast clicks. Duplicate
+  // clinical correspondence is the failure this prevents, and unlike a
+  // duplicate draft it cannot be undone once it has left.
+  const sendInFlightRef = useRef(false);
+
   const handleSendEmail = async () => {
     if (!letter) return;
+    if (sendInFlightRef.current) return;
+    sendInFlightRef.current = true;
     setSending(true);
     try {
       const { data, error } = await supabase.functions.invoke("send-letter-email", {
@@ -214,6 +222,7 @@ const LetterView = () => {
       }
     } finally {
       setSending(false);
+      sendInFlightRef.current = false;
     }
   };
 

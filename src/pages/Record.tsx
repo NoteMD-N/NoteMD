@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useInactivity } from "@/hooks/useInactivityTimeout";
 import { letterRoute } from "@/lib/letter-route";
-import { readPhi, writePhi, clearPhi, isSnapshotFresh } from "@/lib/local-phi";
+import { readPhi, writePhi, clearPhi, isSnapshotFresh, listPhiSlots, tabId } from "@/lib/local-phi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -88,6 +88,12 @@ const Record = () => {
   const [stage, setStage] = useState<Stage>("record");
   const [editableTranscript, setEditableTranscript] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  // Guards against a second generation starting before React has re-rendered
+  // the disabled button. A ref is checked and set synchronously in the same
+  // tick as the click, so it does not depend on render timing the way the
+  // `processing` state does. Without it a double-click produces two recording
+  // rows and two letters for one consultation.
+  const generationInFlightRef = useRef(false);
   const { suspend: suspendInactivity } = useInactivity();
   const [isPaused, setIsPaused] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -259,7 +265,16 @@ const Record = () => {
   // Saved every few seconds while recording so if the tab is closed, the
   // user is offered to recover their in-progress transcript on next open.
   // Slot name within the per-user PHI namespace (see src/lib/local-phi.ts).
-  const RECOVERY_SLOT = "recording-recovery";
+  // One slot per tab, not per user. localStorage is shared across tabs, so a
+  // single slot meant two consultations open side by side overwrote each
+  // other: one session was lost, and the survivor was offered back in the
+  // other tab under a different patient's name.
+  const RECOVERY_PREFIX = "recording-recovery";
+  const RECOVERY_SLOT = `${RECOVERY_PREFIX}.${tabId()}`;
+  // Which slot the offered snapshot came from, so Discard clears that one
+  // rather than this tab's.
+  const recoveredSlotRef = useRef<string>(RECOVERY_SLOT);
+  const [recoveryFromOtherTab, setRecoveryFromOtherTab] = useState(false);
   type RecoverySnapshot = {
     savedAt: number;
     startedAt: number;
@@ -300,12 +315,37 @@ const Record = () => {
       if (!user) return;
       recoveryUserIdRef.current = user.id;
 
-      const snap = readPhi<RecoverySnapshot>(user.id, RECOVERY_SLOT);
+      // This tab's own snapshot first — that is the reload or crash-and-
+      // reopen case, and it is unambiguously the right one.
+      let snap = readPhi<RecoverySnapshot>(user.id, RECOVERY_SLOT);
+      let slot = RECOVERY_SLOT;
+      let fromOtherTab = false;
+
+      if (!snap?.transcript) {
+        // Otherwise look for one left by a tab that has since closed. Its
+        // sessionStorage is gone, so it cannot be found by tab id.
+        const others = listPhiSlots<RecoverySnapshot>(user.id, RECOVERY_PREFIX)
+          .filter((s) => s.slot !== RECOVERY_SLOT && s.value?.transcript);
+        // Discard anything stale while we are here, rather than leaving
+        // patient data in the browser until the next sign-out.
+        for (const candidate of others) {
+          if (!isSnapshotFresh(candidate.value.savedAt)) clearPhi(user.id, candidate.slot);
+        }
+        const fresh = others.find((s) => isSnapshotFresh(s.value.savedAt));
+        if (fresh) {
+          snap = fresh.value;
+          slot = fresh.slot;
+          fromOtherTab = true;
+        }
+      }
+
       if (!snap?.transcript) return;
       if (!isSnapshotFresh(snap.savedAt)) {
-        clearPhi(user.id, RECOVERY_SLOT);
+        clearPhi(user.id, slot);
         return;
       }
+      recoveredSlotRef.current = slot;
+      setRecoveryFromOtherTab(fromOtherTab);
       setRecovery(snap);
     })();
   }, []);
@@ -438,7 +478,10 @@ const Record = () => {
   // (letter generated, or explicitly discarded — see handleDiscard).
   const clearRecovery = useCallback(() => {
     if (recoveryUserIdRef.current) {
-      clearPhi(recoveryUserIdRef.current, RECOVERY_SLOT);
+      clearPhi(recoveryUserIdRef.current, recoveredSlotRef.current);
+      if (recoveredSlotRef.current !== RECOVERY_SLOT) {
+        clearPhi(recoveryUserIdRef.current, RECOVERY_SLOT);
+      }
     }
     setRecovery(null);
   }, []);
@@ -1475,6 +1518,16 @@ const Record = () => {
 
   // Actually generate letter from review stage
   const handleGenerateFromReview = async () => {
+    if (generationInFlightRef.current) return;
+    generationInFlightRef.current = true;
+    try {
+      await runGenerateFromReview();
+    } finally {
+      generationInFlightRef.current = false;
+    }
+  };
+
+  const runGenerateFromReview = async () => {
     const blob = new Blob(chunksRef.current, { type: "audio/webm" });
 
     // WYSIWYG GUARANTEE
@@ -1756,14 +1809,26 @@ const Record = () => {
                 </div>
                 <div className="min-w-0">
                   <p className="font-medium text-sm text-slate-900 dark:text-slate-100">
-                    Recover your in-progress transcript?
+                    {recoveryFromOtherTab
+                      ? "Recover a transcript from another session?"
+                      : "Recover your in-progress transcript?"}
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {(recovery.transcript || "").split(/\s+/).filter(Boolean).length} words captured
-                    {recovery.patient_name ? ` · ${recovery.patient_name}` : ""}
+                    {/* The patient is named first, and its absence is stated
+                        rather than left blank: this is the only thing the
+                        clinician can check the transcript against before
+                        restoring it. */}
+                    {recovery.patient_name
+                      ? <strong>{recovery.patient_name}</strong>
+                      : <em>No patient name was recorded</em>}
+                    {" · "}
+                    {(recovery.transcript || "").split(/\s+/).filter(Boolean).length} words
                     {" · saved "}
                     {Math.max(1, Math.round((Date.now() - recovery.savedAt) / 60000))}m ago.
-                    Audio isn't recovered — just the transcript.
+                    {recoveryFromOtherTab
+                      ? " This was left by a different tab or window — check the patient before restoring."
+                      : ""}
+                    {" Audio isn't recovered — just the transcript."}
                   </p>
                 </div>
               </div>
