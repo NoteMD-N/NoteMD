@@ -57,7 +57,7 @@ const PatientDataRequest = () => {
     setSearching(true);
     setMatches(null);
     try {
-      const { data, error } = await supabase.rpc("gdpr_find_patient_records", criteria() as any);
+      const { data, error } = await supabase.rpc("gdpr_find_patient_records", criteria());
       if (error) throw error;
       const rows = (data ?? []) as Match[];
       setMatches(rows);
@@ -72,7 +72,7 @@ const PatientDataRequest = () => {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const { data, error } = await supabase.rpc("gdpr_export_patient", criteria() as any);
+      const { data, error } = await supabase.rpc("gdpr_export_patient", criteria());
       if (error) throw error;
 
       // Offer the export as a file the clinician can hand to the requester.

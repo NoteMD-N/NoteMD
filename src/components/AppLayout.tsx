@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Mic } from "lucide-react";
 import AppSidebar from "@/components/AppSidebar";
 import { BrandMark } from "@/components/BrandLogo";
+import { InactivityProvider } from "@/hooks/useInactivityTimeout";
+import { InactivityWarning } from "@/components/InactivityWarning";
 
 const routeLabels: Record<string, string> = {
   dashboard: "Dashboard",
@@ -37,6 +39,10 @@ const AppLayout = () => {
   });
 
   return (
+    // Scoped to the authenticated area: the landing page has no session to
+    // time out and no patient data cached.
+    <InactivityProvider>
+    <InactivityWarning />
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar />
@@ -87,6 +93,7 @@ const AppLayout = () => {
         </div>
       </div>
     </SidebarProvider>
+    </InactivityProvider>
   );
 };
 

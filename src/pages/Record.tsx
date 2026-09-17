@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useInactivity } from "@/hooks/useInactivityTimeout";
 import { letterRoute } from "@/lib/letter-route";
 import { readPhi, writePhi, clearPhi, isSnapshotFresh } from "@/lib/local-phi";
 import { Button } from "@/components/ui/button";
@@ -87,6 +88,7 @@ const Record = () => {
   const [stage, setStage] = useState<Stage>("record");
   const [editableTranscript, setEditableTranscript] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const { suspend: suspendInactivity } = useInactivity();
   const [isPaused, setIsPaused] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -141,9 +143,9 @@ const Record = () => {
         .select("skip_dictation_review, dictation_engine")
         .eq("user_id", user.id)
         .maybeSingle();
-      const engine = (data as any)?.dictation_engine;
+      const engine = data?.dictation_engine;
       return {
-        skip_dictation_review: !!(data as any)?.skip_dictation_review,
+        skip_dictation_review: !!data?.skip_dictation_review,
         dictation_engine: engine === "fast" || engine === "accurate" ? engine : "accurate",
       };
     },
@@ -492,6 +494,15 @@ const Record = () => {
       }
     };
   }, [isRecording, autosaveDraftToServer]);
+
+  // Dictating is not idling. The inactivity timer produces no events while a
+  // clinician is simply speaking, so an active recording suspends it outright
+  // rather than relying on incidental interaction. Signing someone out
+  // mid-consultation would destroy clinical work.
+  useEffect(() => {
+    if (!isRecording) return;
+    return suspendInactivity("recording");
+  }, [isRecording, suspendInactivity]);
 
   // Applies a recovered snapshot to the current form so the user can save it as
   // a draft or generate a letter from the recovered transcript. Audio isn't

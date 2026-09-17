@@ -15,6 +15,13 @@ import { Switch } from "@/components/ui/switch";
 import { User, Shield, Save, Loader2, Users, Mail, Plus, X, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import TwoFactorSettings from "@/components/TwoFactorSettings";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import PatientDataRequest from "@/components/PatientDataRequest";
 
 const Settings = () => {
@@ -104,10 +111,10 @@ const Settings = () => {
     if (profile) {
       setAutoSendEnabled(profile.auto_send_enabled ?? false);
       setRecipients(profile.auto_send_recipients ?? []);
-      if (!roleTitle) setRoleTitle((profile as any).role_title ?? "");
-      if (!hospitalOrg) setHospitalOrg((profile as any).hospital_organisation ?? "");
-      setDictationEngine(((profile as any).dictation_engine as "fast" | "accurate") ?? "accurate");
-      setSkipDictationReview(!!(profile as any).skip_dictation_review);
+      if (!roleTitle) setRoleTitle(profile.role_title ?? "");
+      if (!hospitalOrg) setHospitalOrg(profile.hospital_organisation ?? "");
+      setDictationEngine((profile.dictation_engine as "fast" | "accurate") ?? "accurate");
+      setSkipDictationReview(!!profile.skip_dictation_review);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile]);
@@ -137,7 +144,7 @@ const Settings = () => {
       if (!user) throw new Error("Not authenticated");
       const { error } = await supabase
         .from("profiles")
-        .update({ dictation_engine: engine } as any)
+        .update({ dictation_engine: engine })
         .eq("user_id", user.id);
       if (error) throw error;
     },
@@ -148,12 +155,28 @@ const Settings = () => {
     onError: () => toast.error("Failed to update dictation engine"),
   });
 
+  const inactivityMutation = useMutation({
+    mutationFn: async (minutes: number) => {
+      if (!user) throw new Error("Not authenticated");
+      const { error } = await supabase
+        .from("profiles")
+        .update({ inactivity_timeout_minutes: minutes })
+        .eq("user_id", user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
+      toast.success("Session timeout updated");
+    },
+    onError: () => toast.error("Failed to update session timeout"),
+  });
+
   const skipReviewMutation = useMutation({
     mutationFn: async (skip: boolean) => {
       if (!user) throw new Error("Not authenticated");
       const { error } = await supabase
         .from("profiles")
-        .update({ skip_dictation_review: skip } as any)
+        .update({ skip_dictation_review: skip })
         .eq("user_id", user.id);
       if (error) throw error;
     },
@@ -652,6 +675,41 @@ const Settings = () => {
         <TabsContent value="security" className="space-y-6">
           {/* Second factor — enrolment and removal */}
           <TwoFactorSettings />
+
+          {/* Session timeout. Held per account so it can be set to the
+              deploying organisation's policy rather than ours. */}
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
+            <CardHeader>
+              <CardTitle>Session Timeout</CardTitle>
+              <CardDescription>
+                How long NoteMD waits before signing you out when you stop using
+                it. Signing out also clears patient information held in this
+                browser. A recording in progress will not be interrupted.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <Select
+                  value={String(profile?.inactivity_timeout_minutes ?? 30)}
+                  onValueChange={(v) => inactivityMutation.mutate(Number(v))}
+                >
+                  <SelectTrigger className="w-full sm:w-[220px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[5, 10, 15, 30, 60, 120].map((m) => (
+                      <SelectItem key={m} value={String(m)}>
+                        {m < 60 ? `${m} minutes` : `${m / 60} hour${m > 60 ? "s" : ""}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  You'll be warned a minute before.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Per-patient data subject requests (Art. 15/17/20).
               Secretaries act on a clinician's behalf and should not be able to
