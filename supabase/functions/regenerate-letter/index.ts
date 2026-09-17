@@ -2,6 +2,13 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTemplateSelection } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  PLACEHOLDER_INSTRUCTION,
+  containsDirectIdentifier,
+  placeholderPatientHeader,
+  redactPatientIdentifiers,
+  restorePatientIdentifiers,
+} from "../_shared/identifiers.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { redactVendorError, redactError } from "../_shared/redact.ts";
 
@@ -180,20 +187,36 @@ from the transcript (authoritative source) and the current draft (secondary). Re
 revised letter.`
       : "";
 
-    const systemPrompt = SAFETY_CLAUSE + REFINEMENT_BASE + templateGuidance + NO_TEMPLATE_CLAUSE;
+    const patient = { name: letter.patient_name, id: letter.patient_id };
+    const patientHeader = placeholderPatientHeader(patient);
 
-    const patientHeader = [
-      letter.patient_name ? `Patient Name: ${letter.patient_name}` : null,
-      letter.patient_id ? `Patient ID / NHS Number: ${letter.patient_id}` : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const systemPrompt =
+      SAFETY_CLAUSE + REFINEMENT_BASE + templateGuidance + NO_TEMPLATE_CLAUSE +
+      (patientHeader ? `\n\n${PLACEHOLDER_INSTRUCTION}` : "");
+
+    // The existing draft already has the real identifiers substituted into it,
+    // so sending it back unchanged would undo the minimisation the original
+    // generation achieved.
+    const draftForModel = redactPatientIdentifiers(letter.letter_content ?? "", patient);
+    const transcriptForModel = redactPatientIdentifiers(letter.transcript ?? "", patient);
 
     const userPrompt = `${patientHeader ? `[Patient Name / ID]\n${patientHeader}\n\n` : ""}${
-      letter.transcript
-        ? `CONSULTATION TRANSCRIPT (AUTHORITATIVE SOURCE)\n${letter.transcript}\n\n`
+      transcriptForModel
+        ? `CONSULTATION TRANSCRIPT (AUTHORITATIVE SOURCE)\n${transcriptForModel}\n\n`
         : ""
-    }CURRENT LETTER DRAFT\n${letter.letter_content}\n\nINSTRUCTIONS\n${instructions}\n\nReturn only the revised letter.`;
+    }CURRENT LETTER DRAFT\n${draftForModel}\n\nINSTRUCTIONS\n${instructions}\n\nReturn only the revised letter.`;
+
+    if (containsDirectIdentifier(systemPrompt + userPrompt, patient)) {
+      console.error("[regenerate-letter] A direct identifier reached the prompt; refusing to send.");
+      return new Response(
+        JSON.stringify({
+          error:
+            "Regeneration was stopped because a patient identifier would have been " +
+            "sent to the AI provider.",
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     const gptResponse = await fetch(openAiUrl("chat/completions"), {
       method: "POST",
@@ -220,7 +243,10 @@ revised letter.`
     }
 
     const gptData = await gptResponse.json();
-    const newContent = gptData.choices[0].message.content;
+    const newContent = restorePatientIdentifiers(
+      gptData.choices[0].message.content,
+      patient,
+    );
 
     // Update the letter. When the user picked "No template", detach the template from the letter
     // so subsequent regenerations don't silently inherit it again.

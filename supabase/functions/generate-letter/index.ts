@@ -8,6 +8,12 @@ import {
 } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { logAudit } from "../_shared/audit.ts";
+import {
+  PLACEHOLDER_INSTRUCTION,
+  containsDirectIdentifier,
+  placeholderPatientHeader,
+  restorePatientIdentifiers,
+} from "../_shared/identifiers.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { redactVendorError, redactError } from "../_shared/redact.ts";
 
@@ -451,12 +457,14 @@ serve(async (req) => {
       if (data) chosenTemplate = data;
     }
 
-    const patientHeader = [
-      patient_name ? `Patient Name: ${patient_name}` : null,
-      patient_id ? `Patient ID / NHS Number: ${patient_id}` : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    // Placeholder tokens rather than the patient's name and NHS number. The
+    // model only copies these through, so sending the real values bought
+    // nothing and put two directly identifying fields into a third party's
+    // request logs. They are substituted back in after generation.
+    const patientHeader = placeholderPatientHeader({
+      name: patient_name,
+      id: patient_id,
+    });
 
     // Pull the clinician's display details so the AI can populate the letter signature.
     const { data: clinicianProfile } = await supabase
@@ -508,8 +516,7 @@ Prioritise:
 - Readability.
 
 PATIENT DETAILS
-${patient_name || "[Patient Name]"}
-${patient_id || "[NHS Number / Patient ID]"}
+${patientHeader || "[Patient Name]\n[NHS Number / Patient ID]"}
 
 CLINICAL INFORMATION EXTRACTION REQUIREMENTS
 
@@ -816,11 +823,37 @@ The clinician remains entirely responsible for clinical content. Your role is do
       ? defaultDictationPrompt
       : defaultConsultationPrompt;
 
-    const systemPrompt = SAFETY_CLAUSE + basePrompt + signatureGuidance;
+    const systemPrompt =
+      SAFETY_CLAUSE + basePrompt + signatureGuidance +
+      (patientHeader ? `\n\n${PLACEHOLDER_INSTRUCTION}` : "");
 
     const userPrompt = mode === "dictation"
       ? `Please correct and enhance the following dictated note into a structured professional clinical document.\n\n[TRANSCRIPT]\n${transcript}`
       : `Please convert the following consultation transcript into a comprehensive consultant-level clinical letter using the template above. Include all clinically relevant information and preserve chronology wherever possible.\n\n[TRANSCRIPT]\n${transcript}`;
+
+    // The prompt is built from a safety clause, a template that the clinician
+    // may have written themselves, and the transcript. Check the finished
+    // request rather than assuming the header was the only place an
+    // identifier could appear.
+    if (containsDirectIdentifier(systemPrompt, { name: patient_name, id: patient_id })) {
+      await logAudit(supabase, {
+        action: "letter.generated",
+        resource: "recording",
+        resourceId: recording_id,
+        outcome: "failure",
+        detail: { reason: "identifier_in_prompt" },
+      });
+      console.error("[generate-letter] A direct identifier reached the prompt; refusing to send.");
+      return new Response(
+        JSON.stringify({
+          error:
+            "Generation was stopped because a patient identifier would have been " +
+            "sent to the AI provider. Remove the patient name or NHS number from " +
+            "your template and try again.",
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     const gptResponse = await fetch(openAiUrl("chat/completions"), {
       method: "POST",
@@ -855,7 +888,24 @@ The clinician remains entirely responsible for clinical content. Your role is do
     }
 
     const gptData = await gptResponse.json();
-    const letterContent = gptData.choices[0].message.content;
+    // Substitution happens here, in the same scope that writes the row below,
+    // using the same two variables. There is no lookup and no matching, so a
+    // letter cannot acquire another patient's identifiers.
+    const rawLetter = gptData.choices[0].message.content;
+    const letterContent = restorePatientIdentifiers(rawLetter, {
+      name: patient_name,
+      id: patient_id,
+    });
+
+    // If the model paraphrased the tokens instead of reproducing them, the
+    // letter comes back without the patient header. That is a degradation
+    // rather than a safety problem — no wrong identifier can appear, and the
+    // clinician reviews every letter before it can be sent — but it should be
+    // visible rather than silent, so the outcome is recorded.
+    const expectedTokens = (patient_name ? 1 : 0) + (patient_id ? 1 : 0);
+    const tokensFound =
+      (rawLetter.includes("[[PATIENT_NAME]]") ? 1 : 0) +
+      (rawLetter.includes("[[PATIENT_ID]]") ? 1 : 0);
 
     // Save letter
     const { data: letter, error: letterError } = await supabase
@@ -889,6 +939,8 @@ The clinician remains entirely responsible for clinical content. Your role is do
         transcript_chars: transcript?.length ?? 0,
         letter_chars: letterContent?.length ?? 0,
         status: "draft",
+        identifier_tokens_expected: expectedTokens,
+        identifier_tokens_restored: tokensFound,
       },
     });
 
