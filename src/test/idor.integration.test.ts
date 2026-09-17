@@ -543,6 +543,81 @@ describe.skipIf(!configured)("legitimate access still works", () => {
   });
 });
 
+describe.skipIf(!configured)("rate limiting", () => {
+  it("counts uses and refuses once the limit is passed", async () => {
+    const calls = [];
+    for (let i = 0; i < 5; i++) {
+      const { data } = await outsider.client.rpc("check_rate_limit", {
+        p_bucket: `probe-${stamp}`,
+        p_limit: 3,
+        p_window_seconds: 60,
+      });
+      calls.push(data as { allowed: boolean; remaining: number });
+    }
+    expect(calls.slice(0, 3).every((c) => c.allowed)).toBe(true);
+    expect(calls.slice(3).every((c) => c.allowed)).toBe(false);
+    expect(calls[2].remaining).toBe(0);
+  });
+
+  it("refuses an unauthenticated caller", async () => {
+    // The subject is auth.uid(), never a parameter, so there is no allowance
+    // to consume without a session.
+    const anon = createClient(URL_, ANON, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { error } = await anon.rpc("check_rate_limit", {
+      p_bucket: `probe-${stamp}`,
+      p_limit: 3,
+      p_window_seconds: 60,
+    });
+    record({
+      scenario: "Consume a rate-limit allowance unauthenticated",
+      actor: "Anonymous",
+      target: "rate_limit_counters",
+      blocked: Boolean(error),
+      observed: error ? `error: ${error.message}` : "ALLOWED",
+    });
+    expect(error).toBeTruthy();
+  });
+
+  it("does not let a caller read or reset its own counters", async () => {
+    // Reading them would reveal the limits; writing them would reset the
+    // allowance. The table is reachable only through the SECURITY DEFINER
+    // function.
+    const { data: rows } = await outsider.client.from("rate_limit_counters").select("*");
+    await outsider.client.from("rate_limit_counters").delete().eq("subject", outsider.id);
+
+    const { count } = await admin
+      .from("rate_limit_counters")
+      .select("*", { count: "exact", head: true })
+      .eq("subject", outsider.id);
+
+    record({
+      scenario: "Read and reset own rate-limit counters",
+      actor: "Outsider",
+      target: "rate_limit_counters",
+      blocked: (rows ?? []).length === 0 && (count ?? 0) > 0,
+      observed: `${rows?.length ?? 0} row(s) readable; ${count} row(s) survived the delete`,
+    });
+    expect(rows ?? []).toHaveLength(0);
+    expect(count, "counters must survive a caller's delete").toBeGreaterThan(0);
+  });
+
+  it("counts each subject separately", async () => {
+    const bucket = `probe-shared-${stamp}`;
+    for (let i = 0; i < 3; i++) {
+      await clinicianA.client.rpc("check_rate_limit", {
+        p_bucket: bucket, p_limit: 3, p_window_seconds: 60,
+      });
+    }
+    // A's exhausted allowance must not affect B.
+    const { data } = await clinicianB.client.rpc("check_rate_limit", {
+      p_bucket: bucket, p_limit: 3, p_window_seconds: 60,
+    });
+    expect((data as { allowed: boolean }).allowed).toBe(true);
+  });
+});
+
 describe.skipIf(!configured)("session revocation", () => {
   it("cannot continue reading after the session is revoked", async () => {
     const victim = await makeActor("revoked", "clinician");

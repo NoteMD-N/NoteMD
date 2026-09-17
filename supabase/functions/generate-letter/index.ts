@@ -8,6 +8,7 @@ import {
 } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { logAudit } from "../_shared/audit.ts";
+import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { redactVendorError } from "../_shared/redact.ts";
 
 // ============================================================
@@ -257,6 +258,15 @@ serve(async (req) => {
     }
 
     const userId = claimsData.claims.sub;
+
+    // Rate limit before doing any work. Placed immediately after
+    // authentication so the caller is known, and before anything that costs
+    // money, reaches a vendor, or sends correspondence.
+    const rl = await checkRateLimit(supabase, "generate-letter");
+    if (!rl.allowed) {
+      return rateLimitedResponse("generate-letter", rl, corsHeaders);
+    }
+
     const {
       recording_id,
       audio_path,

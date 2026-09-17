@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { logAudit } from "../_shared/audit.ts";
 
 /**
@@ -38,6 +39,14 @@ serve(async (req) => {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Rate limit before doing any work. Placed immediately after
+    // authentication so the caller is known, and before anything that
+    // costs money, reaches a vendor, or sends correspondence.
+    const rl = await checkRateLimit(supabase, "send-letter-email");
+    if (!rl.allowed) {
+      return rateLimitedResponse("send-letter-email", rl, corsHeaders);
     }
 
     const { letter_id, recipients } = await req.json();

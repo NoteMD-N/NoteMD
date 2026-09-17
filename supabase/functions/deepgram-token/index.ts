@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildStreamingUrl, isEuResidentStreamingHost, hasPrivacyOptOut } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -30,6 +31,14 @@ serve(async (req) => {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Rate limit before doing any work. Placed immediately after
+    // authentication so the caller is known, and before anything that
+    // costs money, reaches a vendor, or sends correspondence.
+    const rl = await checkRateLimit(supabase, "deepgram-token");
+    if (!rl.allowed) {
+      return rateLimitedResponse("deepgram-token", rl, corsHeaders);
     }
 
     const DEEPGRAM_API_KEY = Deno.env.get("DEEPGRAM_API_KEY");

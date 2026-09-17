@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTemplateSelection } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { redactVendorError } from "../_shared/redact.ts";
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,14 @@ serve(async (req) => {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Rate limit before doing any work. Placed immediately after
+    // authentication so the caller is known, and before anything that
+    // costs money, reaches a vendor, or sends correspondence.
+    const rl = await checkRateLimit(supabase, "regenerate-letter");
+    if (!rl.allowed) {
+      return rateLimitedResponse("regenerate-letter", rl, corsHeaders);
     }
 
     const { letter_id, instructions, template_id, fast } = await req.json();
