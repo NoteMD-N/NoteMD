@@ -15,8 +15,8 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | # | Item | Status | Effort |
 |---|------|--------|--------|
 | 5a | Expanded audit trail | done | 0.9 d |
-| 5b | Separate staging environment | blocked — needs a second Supabase project | — |
-| 5c | Cross-user / IDOR testing incl. secretary | not started | — |
+| 5b | Separate staging environment | done — project live, 19 migrations applied | 0.6 d |
+| 5c | Cross-user / IDOR testing incl. secretary | done — 20 tests, 3 vulnerabilities found and fixed | 1.1 d |
 | 1 | Azure OpenAI migration | not started | — |
 | 3 | Deepgram unchanged (EU + `mip_opt_out`) | done — regression tests already in place | — |
 | 4 | Identifier minimisation to AI providers | not started | — |
@@ -27,11 +27,51 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 9 | Backups, recovery test, retention proposal | not started | — |
 | 10 | Final documentation and evidence pack | not started | — |
 
-**Effort to date: 1.0 d**
+**Effort to date: 2.7 d**
 
 ---
 
 ## Findings
+
+### F-002 — Any account could grant itself access to any clinician's patient records
+
+**Severity: critical.** Found 17 September 2026 by the IDOR suite. **Fixed.**
+
+Secretary access is derived at query time from `profiles.clinician_id`:
+
+    CREATE POLICY "Secretaries can view their clinician's letters"
+      ON public.letters FOR SELECT
+      USING (user_id = public.get_my_clinician_id());
+
+and the only policy governing profile writes was:
+
+    CREATE POLICY "Users can update their own profile"
+      ON public.profiles FOR UPDATE USING (auth.uid() = user_id);
+
+That restricts which *row* may be updated, not which *columns*. So any
+authenticated account could set its own `clinician_id` to another clinician's
+`user_id` and immediately read that clinician's letters, recordings and stored
+audio — every patient record belonging to them, from a single UPDATE.
+
+Confirmed against the live staging database, not inferred from the schema: an
+unrelated account self-assigned and then read clinician A's letter.
+
+Fixed in `20260917100000_lock_privileged_profile_columns.sql`. `role`,
+`clinician_id` and `user_id` are no longer self-assignable, on UPDATE or on
+INSERT. Legitimate secretary assignment is unaffected because
+`manage-secretary` performs it with the service role.
+
+### F-003 — Any account could promote itself to admin
+
+**Severity: high.** Same root cause as F-002, same fix. `profiles.role` was
+self-assignable; an ordinary account could set it to `admin`.
+
+### F-004 — Audit entries could be attributed to another user
+
+**Severity: high.** Consequence of F-002: having self-assigned as a
+clinician's secretary, an account could log audit events attributed to that
+clinician. Closed by the same fix — the attempt is now recorded with
+`outcome = 'denied'` against the actor rather than the claimed subject.
 
 ### F-001 — A draft letter can be emailed and exported without clinician review
 
@@ -77,9 +117,12 @@ penetration-test finding later.
 
 These block delivery and cannot be done from the codebase.
 
-- **Staging Supabase project** (item 5b) — a second project in `eu-west-1`,
-  with its own database, storage, auth configuration and API keys. Needed
-  before the recovery test in item 9 can run against synthetic data.
+- **Confirm the staging project region is `eu-west-1`** (Settings → General).
+  The residency commitment covers staging as well as production.
+- **Apply the migrations to production.** Staging is up to date; production is
+  serving code that writes audit events against columns it does not yet have.
+  Audit writes fail soft, so nothing breaks, but the trail is not being kept:
+  `./scripts/db-push.sh production`. This now also carries the F-002 fix.
 - **Azure OpenAI resource** (item 1) — endpoint, deployment name, key and the
   confirmed region. Note that the audio/transcription models are not generally
   available in UK South; if the required model is only offered in the EU Data

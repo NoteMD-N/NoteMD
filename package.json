@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:staging": "vite build --mode staging"
+    "build:staging": "vite build --mode staging",
+    "test:idor": "vitest run src/test/idor.integration.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
