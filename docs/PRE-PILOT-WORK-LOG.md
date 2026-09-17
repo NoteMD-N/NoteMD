@@ -24,10 +24,10 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 6 | Draft/Reviewed workflow verification | done — F-001 found and closed | 0.5 d |
 | 7 | Wrong-patient / concurrency testing | not started | — |
 | 8 | Remaining security and configuration | mostly done — see below | 1.9 d |
-| 9 | Backups, recovery test, retention proposal | not started | — |
+| 9 | Backups, recovery test, retention proposal | done — recovery test PASSED | 0.7 d |
 | 10 | Final documentation and evidence pack | not started | — |
 
-**Effort to date: 5.0 d**
+**Effort to date: 5.7 d**
 
 ---
 
@@ -144,8 +144,13 @@ convenience a later change reintroduces without anyone noticing.
 
 These block delivery and cannot be done from the codebase.
 
-- **Confirm the staging project region is `eu-west-1`** (Settings → General).
-  The residency commitment covers staging as well as production.
+- **Confirm whether point-in-time recovery is enabled** on production
+  (Database → Backups). The CLI exposes the restore command regardless, so its
+  presence proves nothing; PITR is a paid add-on. Without it the recovery
+  point objective is up to 24 hours.
+- **Approve or amend `docs/RETENTION-PROPOSAL.md`** before any retention work
+  starts. One item in it — deleting audio once a letter is exported — needs a
+  Clinical Safety Officer decision, not a developer one.
 - **Apply the migrations to production.** Staging is up to date; production is
   serving code that writes audit events against columns it does not yet have.
   Audit writes fail soft, so nothing breaks, but the trail is not being kept:
