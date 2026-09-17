@@ -2,6 +2,15 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { logAudit } from "../_shared/audit.ts";
+
+/**
+ * Letter states a clinician has signed off.
+ *
+ * 'draft' is deliberately absent: it is the state AI generation produces, and
+ * generation is not approval. 'exported' is present so re-sending a letter
+ * that has already gone out is still possible.
+ */
+const APPROVED_FOR_SEND = ["reviewed", "exported"];
 import { redactVendorError } from "../_shared/redact.ts";
 
 serve(async (req) => {
@@ -41,6 +50,37 @@ serve(async (req) => {
       .eq("id", letter_id)
       .single();
     if (letterErr || !letter) throw new Error("Letter not found");
+
+    // The approval gate.
+    //
+    // A letter is created in 'draft' by AI generation. It reaches 'reviewed'
+    // only when the clinician saves it from the review screen, which is their
+    // explicit approval. Sending is therefore refused until then — generation
+    // must never be able to put clinical correspondence in front of a
+    // recipient on its own.
+    //
+    // Enforced here rather than in the caller because this function is the
+    // single route to a recipient: the UI, auto-send and any future caller
+    // all pass through it.
+    if (!APPROVED_FOR_SEND.includes(letter.status)) {
+      await logAudit(supabase, {
+        action: "letter.email_failed",
+        resource: "letter",
+        resourceId: letter_id,
+        outcome: "denied",
+        detail: { reason: "not_reviewed", status: letter.status },
+      });
+      return new Response(
+        JSON.stringify({
+          error:
+            "This letter has not been reviewed yet. Open it, check the content, " +
+            "and save it before sending.",
+          needs_review: true,
+          status: letter.status,
+        }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Resolve recipient list: explicit recipients, else the user's saved auto-send recipients
     let toList: string[] = Array.isArray(recipients) ? recipients : [];

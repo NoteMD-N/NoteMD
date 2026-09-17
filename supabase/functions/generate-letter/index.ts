@@ -888,34 +888,17 @@ The clinician remains entirely responsible for clinical content. Your role is do
       .update({ status: "letter_generated" })
       .eq("id", recording_id);
 
-    // Auto-send by email if the clinician has enabled it and has saved recipients
-    try {
-      const { data: prof } = await supabase
-        .from("profiles")
-        .select("auto_send_enabled, auto_send_recipients")
-        .eq("user_id", userId)
-        .single();
-
-      if (prof?.auto_send_enabled && (prof.auto_send_recipients?.length ?? 0) > 0) {
-        const emailResp = await fetch(
-          `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-letter-email`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: authHeader,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ letter_id: letter.id }),
-          }
-        );
-        if (!emailResp.ok) {
-          console.warn("Auto-send email did not complete:", redactVendorError(await emailResp.text()));
-        }
-      }
-    } catch (e) {
-      // Never fail letter generation because of an email problem
-      console.warn("Auto-send email error (non-fatal):", e);
-    }
+    // Deliberately NOT sending here.
+    //
+    // The clinical safety boundary is: AI generates a draft, the clinician
+    // reviews and edits it, the clinician approves, and only then does it
+    // leave the system. Generation is not approval. Auto-sending at this
+    // point would email an AI draft that no clinician has read, which is the
+    // one outcome the boundary exists to prevent.
+    //
+    // Clinicians who have auto-send enabled still get it — the send now fires
+    // when the letter moves to 'reviewed', which is the clinician's explicit
+    // action. See send-letter-email, which refuses anything still in draft.
 
     return new Response(
       JSON.stringify({ letter_id: letter.id, success: true }),

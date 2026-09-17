@@ -21,13 +21,13 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 3 | Deepgram unchanged (EU + `mip_opt_out`) | done — regression tests already in place | — |
 | 4 | Identifier minimisation to AI providers | not started | — |
 | 2 | Azure Communication Services email | not started | — |
-| 6 | Draft/Reviewed workflow verification | **finding raised — see below** | 0.1 d |
+| 6 | Draft/Reviewed workflow verification | done — F-001 found and closed | 0.5 d |
 | 7 | Wrong-patient / concurrency testing | not started | — |
 | 8 | Remaining security and configuration | not started | — |
 | 9 | Backups, recovery test, retention proposal | not started | — |
 | 10 | Final documentation and evidence pack | not started | — |
 
-**Effort to date: 2.7 d**
+**Effort to date: 3.1 d**
 
 ---
 
@@ -93,23 +93,26 @@ Two routes currently cross that boundary.
    `auto_send_enabled` set. With that setting on, an AI-generated draft is
    emailed **immediately on generation** — the clinician does not see it first.
 
-The audit trail now records `status_before_send` on every send, so the
-condition is at least observable in production from this commit onward. The
-behaviour itself is unchanged pending a decision, because closing it changes
-what the auto-send feature does.
+**Fixed** 17 September 2026, by enforcing the boundary the client wrote down.
 
-**Options**
+- `send-letter-email` now refuses any letter whose status is not `reviewed` or
+  `exported`, returning HTTP 409 with `needs_review: true` and recording a
+  `denied` audit event. The gate sits in this function rather than in its
+  callers because it is the single route to a recipient.
+- `generate-letter` no longer sends. It creates the draft and stops.
+- Auto-send is re-homed to the clinician's save action, so the feature keeps
+  its intent — not having to click send on every letter — without an unread
+  draft being able to reach anyone.
 
-| | Approach | Effect |
-|---|---|---|
-| A | Refuse to send a letter in `draft`; require `reviewed` first. Auto-send then only fires for letters the clinician has saved. | Closes the gap fully. Auto-send stops being automatic on generation. |
-| B | Keep auto-send, but require the clinician to opt in per letter rather than as a standing profile setting. | Closes the gap; keeps a one-click path. |
-| C | Leave as is and document it as an accepted risk in the DPIA. | No development. Likely to be raised by the penetration tester and by the Trust's clinical safety officer. |
+**Behaviour change to tell the client about:** clinicians with auto-send
+enabled previously received nothing to review; the letter went out on
+generation. They must now open and save each letter, at which point it sends
+automatically. That is the intended boundary, but it is a visible change to
+their day.
 
-Recommendation: **A**, with the auto-send setting relabelled so it is clear it
-sends on review rather than on generation. This is the option that matches the
-boundary the client has written down, and it is a small change now versus a
-penetration-test finding later.
+`src/test/approval-gate.test.ts` pins all of it, including that
+`generate-letter` contains no call to `send-letter-email` — the kind of
+convenience a later change reintroduces without anyone noticing.
 
 ---
 

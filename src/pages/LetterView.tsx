@@ -64,6 +64,10 @@ const LetterView = () => {
   // Audio playback
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
+  // Whether this clinician has asked for letters to go out automatically once
+  // they have reviewed them.
+  const [autoSend, setAutoSend] = useState(false);
+
   useEffect(() => {
     if (!id) {
       // No fragment, or one that isn't a valid identifier. Stop loading and
@@ -96,6 +100,14 @@ const LetterView = () => {
             .createSignedUrl(audioPath, 3600);
           if (signed?.signedUrl) setAudioUrl(signed.signedUrl);
         }
+      });
+
+    supabase
+      .from("profiles")
+      .select("auto_send_enabled, auto_send_recipients")
+      .single()
+      .then(({ data }) => {
+        setAutoSend(Boolean(data?.auto_send_enabled) && (data?.auto_send_recipients?.length ?? 0) > 0);
       });
 
     // Load templates for the "change template" dropdown
@@ -137,6 +149,13 @@ const LetterView = () => {
       });
       toast.success("Letter saved");
       setLetter({ ...letter, letter_content: editedContent, status: "reviewed" });
+
+      // Auto-send used to fire the moment AI produced the draft, which meant a
+      // letter no clinician had read could reach a recipient. It now runs here
+      // instead: saving is the clinician's review, so the feature keeps its
+      // intent ("I don't want to click send every time") without crossing the
+      // approval boundary.
+      if (autoSend) void handleSendEmail();
     }
     setSaving(false);
   };
@@ -164,6 +183,10 @@ const LetterView = () => {
       if (error) throw new Error(error.message);
       if (data?.not_configured) {
         toast.error("Email delivery isn't set up yet. Add a sending domain to enable it.");
+        return;
+      }
+      if (data?.needs_review) {
+        toast.error("Review the letter and save it before sending.");
         return;
       }
       if (data?.error) throw new Error(data.error);
