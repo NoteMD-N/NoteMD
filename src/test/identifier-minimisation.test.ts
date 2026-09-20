@@ -160,7 +160,7 @@ describe("both functions apply it", () => {
       ["regenerate-letter", regenerateLetter],
     ] as const) {
       const guardAt = src.indexOf("containsDirectIdentifier(");
-      const sendAt = src.indexOf('openAiUrl("chat/completions")');
+      const sendAt = src.indexOf("chatCompletionsUrl(");
       expect(guardAt, `${name}: no leak check`).toBeGreaterThan(-1);
       expect(sendAt, `${name}: no completion call`).toBeGreaterThan(-1);
       expect(guardAt, `${name}: the check must precede the request`).toBeLessThan(sendAt);

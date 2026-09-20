@@ -3,6 +3,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTemplateSelection } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import {
+  authHeaders,
+  chatCompletionsUrl,
+  processingRegion,
+  resolveAiConfig,
+  transcriptionsUrl,
+} from "../_shared/ai-provider.ts";
+import {
   PLACEHOLDER_INSTRUCTION,
   containsDirectIdentifier,
   placeholderPatientHeader,
@@ -22,10 +29,9 @@ import { redactVendorError, redactError } from "../_shared/redact.ts";
 //
 //   OPENAI_API_BASE=https://eu.api.openai.com/v1
 // ---------------------------------------------------------------------------
-function openAiUrl(path: string): string {
-  const base = (Deno.env.get("OPENAI_API_BASE") || "https://api.openai.com/v1").replace(/\/+$/, "");
-  return `${base}/${path.replace(/^\/+/, "")}`;
-}
+/** Provider configuration. Azure is selected by environment, not by code. */
+const aiConfig = resolveAiConfig((k) => Deno.env.get(k));
+
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -33,8 +39,7 @@ serve(async (req) => {
   }
 
   try {
-    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
+    if (!aiConfig.apiKey) throw new Error("AI provider is not configured");
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -218,15 +223,18 @@ revised letter.`
       );
     }
 
-    const gptResponse = await fetch(openAiUrl("chat/completions"), {
+    const model = fast ? aiConfig.fastModel : aiConfig.letterModel;
+    const gptResponse = await fetch(chatCompletionsUrl(aiConfig, model), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        ...authHeaders(aiConfig),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        // Fast model for quick refinements (grammar, structure, simple changes); full model for template switches and big rewrites
-        model: fast ? "gpt-4o-mini" : "gpt-4o",
+        // Fast model for quick refinements (grammar, structure, simple changes);
+        // full model for template switches and big rewrites. On Azure these are
+        // deployment names rather than model names.
+        model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },

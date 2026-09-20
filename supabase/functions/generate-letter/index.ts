@@ -7,6 +7,13 @@ import {
   buildBatchUrl,
 } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  authHeaders,
+  chatCompletionsUrl,
+  processingRegion,
+  resolveAiConfig,
+  transcriptionsUrl,
+} from "../_shared/ai-provider.ts";
 import { logAudit } from "../_shared/audit.ts";
 import {
   PLACEHOLDER_INSTRUCTION,
@@ -92,12 +99,9 @@ function contentTypeFor(path: string): string {
 //
 //   OPENAI_API_BASE=https://eu.api.openai.com/v1
 // ---------------------------------------------------------------------------
-const LETTER_MODEL = Deno.env.get("OPENAI_LETTER_MODEL") || "gpt-4o";
+/** Provider configuration. Azure is selected by environment, not by code. */
+const aiConfig = resolveAiConfig((k) => Deno.env.get(k));
 
-function openAiUrl(path: string): string {
-  const base = (Deno.env.get("OPENAI_API_BASE") || "https://api.openai.com/v1").replace(/\/+$/, "");
-  return `${base}/${path.replace(/^\/+/, "")}`;
-}
 
 // ---------------------------------------------------------------------------
 // OpenAI transcription (primary "accurate" engine).
@@ -121,8 +125,9 @@ const CLINICAL_PROMPT =
   "sumatriptan, amlodipine, atorvastatin, levothyroxine, salbutamol, omeprazole.";
 
 async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<string> {
-  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-  if (!OPENAI_API_KEY) throw new Error("Transcription service is not configured (OPENAI_API_KEY)");
+  if (!aiConfig.apiKey) {
+    throw new Error("Transcription service is not configured (no provider API key)");
+  }
 
   if (audioBlob.size > OPENAI_MAX_UPLOAD_BYTES) {
     throw new Error(
@@ -133,7 +138,7 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
 
   // gpt-4o-transcribe is the current highest-accuracy model; whisper-1 remains
   // available as an override via env if we ever need to pin back.
-  const model = Deno.env.get("OPENAI_TRANSCRIBE_MODEL") || "gpt-4o-transcribe";
+  const model = aiConfig.transcribeModel;
 
   const ext = (audioPath.split(".").pop() || "webm").toLowerCase();
   const form = new FormData();
@@ -145,9 +150,9 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
   // temperature 0 = deterministic; avoids the model "smoothing" clinical detail.
   form.append("temperature", "0");
 
-  const resp = await fetch(openAiUrl("audio/transcriptions"), {
+  const resp = await fetch(transcriptionsUrl(aiConfig, model), {
     method: "POST",
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    headers: authHeaders(aiConfig),
     body: form,
   });
 
@@ -234,9 +239,8 @@ serve(async (req) => {
   }
 
   try {
-    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-    if (!OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is not configured");
+    if (!aiConfig.apiKey) {
+      throw new Error("AI provider is not configured");
     }
 
     const authHeader = req.headers.get("Authorization");
@@ -855,14 +859,14 @@ The clinician remains entirely responsible for clinical content. Your role is do
       );
     }
 
-    const gptResponse = await fetch(openAiUrl("chat/completions"), {
+    const gptResponse = await fetch(chatCompletionsUrl(aiConfig, aiConfig.letterModel), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        ...authHeaders(aiConfig),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: LETTER_MODEL,
+        model: aiConfig.letterModel,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -934,7 +938,8 @@ The clinician remains entirely responsible for clinical content. Your role is do
       resourceId: letter.id,
       detail: {
         recording_id,
-        model: LETTER_MODEL,
+        model: aiConfig.letterModel,
+        ai_provider: aiConfig.provider,
         template_id: chosenTemplate?.id ?? null,
         transcript_chars: transcript?.length ?? 0,
         letter_chars: letterContent?.length ?? 0,

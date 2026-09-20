@@ -17,7 +17,7 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 5a | Expanded audit trail | done | 0.9 d |
 | 5b | Separate staging environment | done — project live, 19 migrations applied | 0.6 d |
 | 5c | Cross-user / IDOR testing incl. secretary | done — 20 tests, 3 vulnerabilities found and fixed | 1.1 d |
-| 1 | Azure OpenAI migration | not started | — |
+| 1 | Azure OpenAI migration | code complete — awaiting gpt-4o-mini deployment and residency sign-off | 0.7 d |
 | 3 | Deepgram unchanged (EU + `mip_opt_out`) | done — regression tests already in place | — |
 | 4 | Identifier minimisation to AI providers | done | 0.6 d |
 | 2 | Azure Communication Services email | not started | — |
@@ -27,7 +27,7 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 9 | Backups, recovery test, retention proposal | done — recovery test PASSED | 0.7 d |
 | 10 | Final documentation and evidence pack | not started | — |
 
-**Effort to date: 7.3 d**
+**Effort to date: 8.0 d**
 
 ---
 

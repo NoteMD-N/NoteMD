@@ -2,6 +2,13 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveProvider, providerTier, buildBatchUrl } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  authHeaders,
+  chatCompletionsUrl,
+  processingRegion,
+  resolveAiConfig,
+  transcriptionsUrl,
+} from "../_shared/ai-provider.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { logAudit } from "../_shared/audit.ts";
 import { redactVendorError, redactError } from "../_shared/redact.ts";
@@ -74,10 +81,9 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
 //
 //   OPENAI_API_BASE=https://eu.api.openai.com/v1
 // ---------------------------------------------------------------------------
-function openAiUrl(path: string): string {
-  const base = (Deno.env.get("OPENAI_API_BASE") || "https://api.openai.com/v1").replace(/\/+$/, "");
-  return `${base}/${path.replace(/^\/+/, "")}`;
-}
+/** Provider configuration. Azure is selected by environment, not by code. */
+const aiConfig = resolveAiConfig((k) => Deno.env.get(k));
+
 
 // ---------------------------------------------------------------------------
 // OpenAI transcription (primary "accurate" engine).
@@ -101,8 +107,9 @@ const CLINICAL_PROMPT =
   "sumatriptan, amlodipine, atorvastatin, levothyroxine, salbutamol, omeprazole.";
 
 async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<string> {
-  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-  if (!OPENAI_API_KEY) throw new Error("Transcription service is not configured (OPENAI_API_KEY)");
+  if (!aiConfig.apiKey) {
+    throw new Error("Transcription service is not configured (no provider API key)");
+  }
 
   if (audioBlob.size > OPENAI_MAX_UPLOAD_BYTES) {
     throw new Error(
@@ -113,7 +120,7 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
 
   // gpt-4o-transcribe is the current highest-accuracy model; whisper-1 remains
   // available as an override via env if we ever need to pin back.
-  const model = Deno.env.get("OPENAI_TRANSCRIBE_MODEL") || "gpt-4o-transcribe";
+  const model = aiConfig.transcribeModel;
 
   const ext = (audioPath.split(".").pop() || "webm").toLowerCase();
   const form = new FormData();
@@ -125,9 +132,9 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
   // temperature 0 = deterministic; avoids the model "smoothing" clinical detail.
   form.append("temperature", "0");
 
-  const resp = await fetch(openAiUrl("audio/transcriptions"), {
+  const resp = await fetch(transcriptionsUrl(aiConfig, model), {
     method: "POST",
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    headers: authHeaders(aiConfig),
     body: form,
   });
 
