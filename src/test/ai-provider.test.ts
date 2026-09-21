@@ -115,8 +115,24 @@ describe("model and deployment naming", () => {
   it("defaults to the agreed deployment names on Azure", () => {
     const cfg = resolveAiConfig(env(AZURE));
     expect(cfg.letterModel).toBe("gpt-4o");
-    expect(cfg.fastModel).toBe("gpt-4o-mini");
     expect(cfg.transcribeModel).toBe("gpt-4o-transcribe");
+  });
+
+  it("reuses the letter deployment for quick refinements unless told otherwise", () => {
+    // The client's resource has no gpt-4o-mini deployment; refinement must not
+    // depend on one existing.
+    expect(resolveAiConfig(env(AZURE)).fastModel).toBe("gpt-4o");
+    expect(
+      resolveAiConfig(env({ ...AZURE, AZURE_OPENAI_LETTER_DEPLOYMENT: "letters" })).fastModel,
+    ).toBe("letters");
+    expect(
+      resolveAiConfig(env({ ...AZURE, AZURE_OPENAI_FAST_DEPLOYMENT: "gpt-4o-mini" })).fastModel,
+    ).toBe("gpt-4o-mini");
+  });
+
+  it("leaves the OpenAI refinement model unchanged", () => {
+    // Production is on OpenAI today; this change must not alter its behaviour.
+    expect(resolveAiConfig(env({ OPENAI_API_KEY: "sk-test" })).fastModel).toBe("gpt-4o-mini");
   });
 
   it("lets each deployment be renamed independently", () => {

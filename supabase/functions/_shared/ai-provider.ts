@@ -65,6 +65,7 @@ export function resolveAiConfig(env: Env): AiConfig {
     forced === "openai" ? "openai" : forced === "azure" || azureConfigured ? "azure" : "openai";
 
   if (provider === "azure") {
+    const letterDeployment = (env("AZURE_OPENAI_LETTER_DEPLOYMENT") || "gpt-4o").trim();
     return {
       provider: "azure",
       base: azureEndpoint,
@@ -75,8 +76,12 @@ export function resolveAiConfig(env: Env): AiConfig {
       ).trim(),
       // Defaults match the deployment names agreed with the client, so a
       // correctly-named deployment needs no further configuration.
-      letterModel: (env("AZURE_OPENAI_LETTER_DEPLOYMENT") || "gpt-4o").trim(),
-      fastModel: (env("AZURE_OPENAI_FAST_DEPLOYMENT") || "gpt-4o-mini").trim(),
+      letterModel: letterDeployment,
+      // Quick refinements reuse the letter deployment unless a separate one
+      // is configured. The client's resource has gpt-4o and a transcription
+      // model only, and a smaller model buys speed and cost, not correctness —
+      // so there is no reason to block on provisioning another deployment.
+      fastModel: (env("AZURE_OPENAI_FAST_DEPLOYMENT") || letterDeployment).trim(),
       transcribeModel: (env("AZURE_OPENAI_TRANSCRIBE_DEPLOYMENT") || "gpt-4o-transcribe").trim(),
     };
   }
