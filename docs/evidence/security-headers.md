@@ -66,3 +66,39 @@ Loading the built application with the policy applied produced no Content
 Security Policy violations: web fonts loaded (100 faces), stylesheets applied
 (4), the hero image rendered, and the Supabase REST endpoint was reachable
 (HTTP 401, the expected response for an unauthenticated probe).
+
+## Verified in production — 21 September 2026
+
+Headers applied in the Render dashboard on the `doctor-note-ai` static site,
+which serves `notemd.co.uk`. (`render.yaml` is read only on a Blueprint's
+initial deploy, so a service created in the dashboard needs them entered
+there; this is why they were initially absent.)
+
+Each served value was compared character for character with `render.yaml`:
+all seven match on the origin. The HSTS value observed on the
+`*.onrender.com` address is Render's own platform default, which takes
+precedence on that domain; the custom domain serves the configured value.
+
+Loaded `https://notemd.co.uk` with the policy enforced:
+
+| Check | Result |
+| --- | --- |
+| Content-Security-Policy present | yes |
+| Violations raised by the application | none |
+| Web fonts | 100 faces loaded |
+| Supabase API | reachable |
+| `wss://api.eu.deepgram.com` | permitted |
+| `wss://api.deepgram.com` | **blocked by `connect-src`** |
+
+The EU-residency property described above therefore holds in production,
+not only in the local preview.
+
+Note on rollout: `notemd.co.uk` responses carry `s-maxage=300`, so the edge
+serves previously cached copies — without the new headers — for up to five
+minutes after a change. An uncached path returned the new headers immediately.
+
+**Not yet exercised under the production policy:** the signed-in clinical
+flow — live dictation, audio playback on the letter view, and letter
+generation. These use only origins the policy permits and were exercised
+against the same policy locally, but a single end-to-end consultation in
+production is the check that would close this completely.
