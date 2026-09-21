@@ -55,7 +55,10 @@ fi
 # Catch the placeholder being pasted verbatim out of a command example. The
 # CLI's own error for this is a URL parse failure, which does not point at the
 # actual mistake.
-if [[ "$PASSWORD" == *"<"* || "$PASSWORD" == *">"* ]]; then
+PASSWORD_LOWER="$(printf '%s' "$PASSWORD" | tr '[:upper:]' '[:lower:]')"
+if [[ "$PASSWORD" == *"<"* || "$PASSWORD" == *">"* \
+   || "$PASSWORD_LOWER" == your-* || "$PASSWORD_LOWER" == *"password"* \
+   || "$PASSWORD_LOWER" == "changeme" || "$PASSWORD_LOWER" == "xxx"* ]]; then
   echo "error: \$$PASSWORD_VAR still contains a placeholder, not a password." >&2
   echo "       Value starts: ${PASSWORD:0:12}..." >&2
   echo "       Get the real one from Supabase Dashboard -> Settings -> Database." >&2
