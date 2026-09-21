@@ -76,8 +76,11 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error("deepgram-token error:", redactError(error));
+    // The detail stays in the server log. The browser gets a generic message:
+    // internal errors name the vendor and its configuration, and the
+    // transcription provider is not meant to be discoverable from the client.
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ error: "The transcription service is temporarily unavailable." }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

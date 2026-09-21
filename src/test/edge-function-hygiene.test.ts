@@ -86,3 +86,33 @@ describe("every edge function uses the shared CORS headers", () => {
     expect(src).toContain('req.method === "OPTIONS"');
   });
 });
+
+describe("deployment configuration", () => {
+  it("keeps gateway JWT verification off for the Stripe webhook", () => {
+    // Stripe never sends a Supabase token. With verification on, the gateway
+    // refuses every payment event with UNAUTHORIZED_NO_AUTH_HEADER before the
+    // function runs. This was once set only via --no-verify-jwt at deploy time,
+    // and a plain `supabase functions deploy` silently turned it back on.
+    const toml = readFileSync(join(__dirname, "../../supabase/config.toml"), "utf8");
+    expect(toml).toMatch(/\[functions\.stripe-webhook\]\s*\n\s*verify_jwt\s*=\s*false/);
+  });
+
+  it("authenticates Stripe itself, since the gateway does not", () => {
+    const src = readFileSync(
+      join(__dirname, "../../supabase/functions/stripe-webhook/index.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(/stripe-signature/i);
+    expect(src).toMatch(/constructEventAsync\(/);
+  });
+
+  it("does not name the transcription vendor in client-facing errors", () => {
+    const src = readFileSync(
+      join(__dirname, "../../supabase/functions/deepgram-token/index.ts"),
+      "utf8",
+    );
+    const response = src.slice(src.lastIndexOf("new Response("));
+    expect(response).not.toMatch(/error\.message/);
+    expect(response.toLowerCase()).not.toContain("deepgram");
+  });
+});

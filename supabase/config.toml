@@ -2,3 +2,14 @@ project_id = "mdunhinhsrdrilxcdbvq"
 
 [functions.generate-letter]
 verify_jwt = false
+
+# Stripe calls this endpoint directly and never sends a Supabase token, so the
+# gateway's JWT check must be off or every payment event is refused with
+# UNAUTHORIZED_NO_AUTH_HEADER. The function authenticates the caller itself by
+# verifying the Stripe-Signature header against STRIPE_WEBHOOK_SECRET.
+#
+# This was previously set only by deploying with --no-verify-jwt, which a plain
+# `supabase functions deploy` silently undid. Recording it here is what keeps
+# a full deploy from breaking billing.
+[functions.stripe-webhook]
+verify_jwt = false
