@@ -61,3 +61,44 @@ For NHS recipients specifically, deliverability from any third-party domain is
 uncertain, and a Trust will generally expect NHSmail or an approved secure
 pathway for patient-identifiable correspondence. This result is concrete
 evidence for raising that question early rather than at DTAC review.
+
+
+## Authentication verified — 29 September 2026
+
+Message sent from the linked custom domain and analysed by an independent
+third-party checker. Headers as received:
+
+    Received-SPF: Pass (mailfrom) identity=mailfrom;
+      envelope-from=donotreply@mail.notemd.co.uk;
+      helo=cwxp265cu009.outbound.protection.outlook.com
+    Authentication-Results: dkim=pass (2048-bit key)
+      header.d=mail.notemd.co.uk header.i=@mail.notemd.co.uk
+      header.a=rsa-sha256 header.s=selector1-azurecomm-prod-net
+    Authentication-Results: dmarc=none (p=none dis=none)
+      header.from=mail.notemd.co.uk
+    From: DoNotReply <DoNotReply@mail.notemd.co.uk>
+
+| Mechanism | Result |
+| --- | --- |
+| SPF | **pass** |
+| DKIM | **pass**, 2048-bit, selector1 |
+| DMARC | **none** — no policy found for the sending subdomain |
+
+Overall deliverability score 7/10, the only deduction being -3 for
+authentication, attributable entirely to the DMARC result.
+
+### Finding: DMARC policy is not being inherited in practice
+
+`notemd.co.uk` publishes `p=quarantine`, and RFC 7489 requires a receiver that
+finds no record at the sending subdomain to fall back to the organisational
+domain's policy. The independent checker did not do this, reporting `p=none`.
+Receivers vary here, and this is the most likely reason a message with passing
+SPF and DKIM was still filed as junk.
+
+**Remedy:** publish an explicit record at `_dmarc.mail.notemd.co.uk` rather
+than relying on inheritance:
+
+    v=DMARC1; p=quarantine; adkim=r; aspf=r; rua=mailto:dmarc_rua@onsecureserver.net
+
+This should be re-tested after the record propagates, and the result recorded
+here.
