@@ -164,6 +164,41 @@ serve(async (req) => {
         letter.letter_content || "",
       ]);
 
+      // Claim the send before attempting it. A second attempt with the same
+      // key finds the claim and returns the original outcome rather than
+      // delivering another copy. Tested against the live service, Azure's own
+      // repeatability headers did not prevent this on their own.
+      const { data: claimRows } = await supabase.rpc("claim_email_send", {
+        p_key: idempotencyKey,
+        p_letter_id: letter_id,
+        p_provider: provider,
+        p_recipients: toList.length,
+      });
+      const claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
+
+      if (claim?.already_sent) {
+        await logAudit(supabase, {
+          action: "letter.emailed",
+          resource: "letter",
+          resourceId: letter_id,
+          detail: {
+            provider,
+            recipients: toList.length,
+            delivery_status: claim.status ?? "unknown",
+            duplicate_suppressed: true,
+          },
+        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            sent_to: toList,
+            delivery_status: claim.status ?? "pending",
+            already_sent: true,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       const sent = await sendEmail(
         acs,
         {
@@ -172,11 +207,17 @@ serve(async (req) => {
           plainText: bodyText,
           html: bodyHtml,
           idempotencyKey,
+          firstSentAt: claim?.first_sent_at ?? undefined,
         },
         redactVendorError,
       );
 
       if (!sent.accepted) {
+        // Release the claim so a genuine retry is possible: the guard exists
+        // to prevent duplicate delivery, not to block recovery.
+        await supabase.rpc("record_email_send_result", {
+          p_key: idempotencyKey, p_operation_id: null, p_status: "failed",
+        });
         console.error("[send-letter-email] ACS refused the message:", sent.error);
         await logAudit(supabase, {
           action: "letter.email_failed",
@@ -190,16 +231,28 @@ serve(async (req) => {
 
       operationId = sent.operationId;
       deliveryStatus = "accepted";
+      await supabase.rpc("record_email_send_result", {
+        p_key: idempotencyKey, p_operation_id: operationId, p_status: "accepted",
+      });
 
       // A 202 means accepted for delivery, not delivered. Resolve the outcome
       // before telling a clinician their letter has gone.
       if (sent.operationLocation) {
         const outcome = await pollDelivery(acs, sent.operationLocation, redactVendorError);
+        // "sent", not "delivered": Succeeded means ACS accepted and dispatched
+        // the message. A bounce arrives asynchronously afterwards, so claiming
+        // delivery here would assert something we do not know — as a probe to
+        // an unroutable address demonstrated.
         deliveryStatus = outcome.status === "Succeeded"
-          ? "delivered"
+          ? "sent"
           : outcome.status === "Failed"
           ? "failed"
           : "pending";
+
+        await supabase.rpc("record_email_send_result", {
+          p_key: idempotencyKey, p_operation_id: operationId,
+          p_status: deliveryStatus === "failed" ? "failed" : deliveryStatus,
+        });
 
         if (outcome.status === "Failed") {
           console.error("[send-letter-email] ACS reported delivery failure:", outcome.error);

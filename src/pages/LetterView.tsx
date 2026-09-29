@@ -208,9 +208,9 @@ const LetterView = () => {
           delivery_status: data.delivery_status ?? "unknown",
         },
       });
-      // "delivered" is confirmed by the provider. "pending" means it was
-      // accepted but delivery is not yet confirmed, and saying "sent" there
-      // would tell a clinician something we do not know.
+      // "sent" means the provider accepted and dispatched it; a bounce can
+      // still follow. "pending" means it has not even reached that point.
+      // Neither is a claim that anyone received it.
       const count = data.sent_to?.length || 0;
       if (data.delivery_status === "pending") {
         toast.success(

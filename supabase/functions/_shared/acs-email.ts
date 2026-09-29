@@ -47,6 +47,12 @@ export interface AcsMessage {
    * clinical letter.
    */
   idempotencyKey: string;
+  /**
+   * When this send was first attempted. Reused across retries so the
+   * provider's repeatability headers can match; regenerating it defeats them,
+   * which is what happened on the first live test.
+   */
+  firstSentAt?: string;
 }
 
 export interface AcsSendResult {
@@ -262,7 +268,9 @@ export async function sendEmail(
   // correspondence cannot be recalled.
   const headers = await signedHeaders(cfg, "POST", url, body, {
     "Repeatability-Request-ID": message.idempotencyKey,
-    "Repeatability-First-Sent": new Date().toUTCString(),
+    "Repeatability-First-Sent": message.firstSentAt
+      ? new Date(message.firstSentAt).toUTCString()
+      : new Date().toUTCString(),
   });
 
   const resp = await fetch(url.toString(), { method: "POST", headers, body });

@@ -20,14 +20,14 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 1 | Azure OpenAI migration | code complete — awaiting gpt-4o-mini deployment and residency sign-off | 0.7 d |
 | 3 | Deepgram unchanged (EU + `mip_opt_out`) | done — regression tests already in place | — |
 | 4 | Identifier minimisation to AI providers | done | 0.6 d |
-| 2 | Azure Communication Services email | code complete — awaiting connection string and a sending domain | 1.1 d |
+| 2 | Azure Communication Services email | done on staging — sending, delivery status and duplicate suppression verified live | 1.6 d |
 | 6 | Draft/Reviewed workflow verification | done — F-001 found and closed | 0.5 d |
 | 7 | Wrong-patient / concurrency testing | done — 2 defects found and fixed | 1.0 d |
 | 8 | Remaining security and configuration | mostly done — see below | 1.9 d |
 | 9 | Backups, recovery test, retention proposal | done — recovery test PASSED | 0.7 d |
 | 10 | Final documentation and evidence pack | not started | — |
 
-**Effort to date: 9.1 d**
+**Effort to date: 9.6 d**
 
 ---
 
