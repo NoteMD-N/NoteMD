@@ -3,6 +3,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { logAudit } from "../_shared/audit.ts";
+import {
+  idempotencyKeyFor,
+  pollDelivery,
+  resolveAcsConfig,
+  sendEmail,
+} from "../_shared/acs-email.ts";
 
 /**
  * Letter states a clinician has signed off.
@@ -107,10 +113,14 @@ serve(async (req) => {
       throw new Error("No recipient email addresses provided.");
     }
 
+    // Either provider counts as configured. Checking only Resend here would
+    // report "not configured" on an ACS-only deployment and never reach the
+    // sending code below.
+    const acs = resolveAcsConfig((k) => Deno.env.get(k));
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
     const FROM_ADDRESS = Deno.env.get("EMAIL_FROM_ADDRESS"); // e.g. "NoteMD <letters@yourdomain.com>"
 
-    if (!RESEND_API_KEY || !FROM_ADDRESS) {
+    if (!acs && (!RESEND_API_KEY || !FROM_ADDRESS)) {
       // Not configured yet — report clearly so the UI can show a friendly message
       return new Response(
         JSON.stringify({
@@ -136,32 +146,104 @@ serve(async (req) => {
       patientLine ? `<p><strong>${patientLine}</strong></p>` : ""
     }${(letter.letter_content || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
 
-    const resendResponse = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: FROM_ADDRESS,
-        to: toList,
-        subject,
-        text: bodyText,
-        html: bodyHtml,
-      }),
-    });
+    // Azure Communication Services when it is configured, Resend otherwise.
+    // Selection is by environment so the changeover is a configuration step
+    // that can be reversed without a release.
+    let provider = acs ? "acs" : "resend";
+    let deliveryStatus = "unknown";
+    let operationId: string | null = null;
 
-    if (!resendResponse.ok) {
-      const errText = await resendResponse.text();
-      console.error("Resend error:", redactVendorError(errText));
-      await logAudit(supabase, {
-        action: "letter.email_failed",
-        resource: "letter",
-        resourceId: letter_id,
-        outcome: "failure",
-        detail: { provider: "resend", http_status: resendResponse.status, recipients: toList.length },
+    if (acs) {
+      // Same letter, same recipients, same content means one operation, so a
+      // retry — or a double submit that got past the UI guard — cannot deliver
+      // a second copy. A deliberate resend after an edit changes the content
+      // and therefore the key.
+      const idempotencyKey = await idempotencyKeyFor([
+        letter_id,
+        toList.slice().sort().join(","),
+        letter.letter_content || "",
+      ]);
+
+      const sent = await sendEmail(
+        acs,
+        {
+          to: toList.map((address) => ({ address })),
+          subject,
+          plainText: bodyText,
+          html: bodyHtml,
+          idempotencyKey,
+        },
+        redactVendorError,
+      );
+
+      if (!sent.accepted) {
+        console.error("[send-letter-email] ACS refused the message:", sent.error);
+        await logAudit(supabase, {
+          action: "letter.email_failed",
+          resource: "letter",
+          resourceId: letter_id,
+          outcome: "failure",
+          detail: { provider, http_status: sent.status, recipients: toList.length },
+        });
+        throw new Error("Failed to send email. Please try again.");
+      }
+
+      operationId = sent.operationId;
+      deliveryStatus = "accepted";
+
+      // A 202 means accepted for delivery, not delivered. Resolve the outcome
+      // before telling a clinician their letter has gone.
+      if (sent.operationLocation) {
+        const outcome = await pollDelivery(acs, sent.operationLocation, redactVendorError);
+        deliveryStatus = outcome.status === "Succeeded"
+          ? "delivered"
+          : outcome.status === "Failed"
+          ? "failed"
+          : "pending";
+
+        if (outcome.status === "Failed") {
+          console.error("[send-letter-email] ACS reported delivery failure:", outcome.error);
+          await logAudit(supabase, {
+            action: "letter.email_failed",
+            resource: "letter",
+            resourceId: letter_id,
+            outcome: "failure",
+            detail: { provider, reason_kind: "delivery_failed", recipients: toList.length },
+          });
+          throw new Error(
+            "The message was accepted but could not be delivered. Check the recipient addresses and try again."
+          );
+        }
+      }
+    } else {
+      const resendResponse = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: FROM_ADDRESS,
+          to: toList,
+          subject,
+          text: bodyText,
+          html: bodyHtml,
+        }),
       });
-      throw new Error("Failed to send email. Please try again.");
+
+      if (!resendResponse.ok) {
+        const errText = await resendResponse.text();
+        console.error("Resend error:", redactVendorError(errText));
+        await logAudit(supabase, {
+          action: "letter.email_failed",
+          resource: "letter",
+          resourceId: letter_id,
+          outcome: "failure",
+          detail: { provider, http_status: resendResponse.status, recipients: toList.length },
+        });
+        throw new Error("Failed to send email. Please try again.");
+      }
+      deliveryStatus = "accepted";
     }
 
     // Sending metadata only: sender, record, recipient count, outcome. The
@@ -171,9 +253,11 @@ serve(async (req) => {
       resource: "letter",
       resourceId: letter_id,
       detail: {
-        provider: "resend",
+        provider,
         recipients: toList.length,
         status_before_send: letter.status ?? null,
+        delivery_status: deliveryStatus,
+        operation_id: operationId,
       },
     });
 
@@ -191,7 +275,14 @@ serve(async (req) => {
     });
 
     return new Response(
-      JSON.stringify({ success: true, sent_to: toList }),
+      JSON.stringify({
+        success: true,
+        sent_to: toList,
+        // "delivered" is confirmed by the provider; "pending" means accepted
+        // but not yet confirmed. The UI distinguishes them so a clinician is
+        // never told a letter arrived when that is not yet known.
+        delivery_status: deliveryStatus,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {

@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  idempotencyKeyFor,
+  resolveAcsConfig,
+  sendEmail,
+} from "../_shared/acs-email.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { redactVendorError, redactError } from "../_shared/redact.ts";
 
@@ -57,9 +62,13 @@ serve(async (req) => {
     toList = toList.map((e) => String(e).trim()).filter(Boolean);
     if (toList.length === 0) throw new Error("No recipient email addresses provided.");
 
+    // Either provider counts as configured. Checking only Resend here would
+    // report "not configured" on an ACS-only deployment and never reach the
+    // sending code below.
+    const acs = resolveAcsConfig((k) => Deno.env.get(k));
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
     const FROM_ADDRESS = Deno.env.get("EMAIL_FROM_ADDRESS");
-    if (!RESEND_API_KEY || !FROM_ADDRESS) {
+    if (!acs && (!RESEND_API_KEY || !FROM_ADDRESS)) {
       return new Response(
         JSON.stringify({
           error: "Email sending is not configured yet. Add your sending domain to enable this.",
@@ -87,25 +96,52 @@ serve(async (req) => {
       patientLine ? `<p><strong>${escape(patientLine)}</strong></p>` : ""
     }<p style="color:#475569;">${escape(intro)}</p><div>${escape(safeTranscript)}</div></div>`;
 
-    const resendResponse = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: FROM_ADDRESS,
-        to: toList,
-        subject,
-        text: bodyText,
-        html: bodyHtml,
-      }),
-    });
+    if (acs) {
+      // Keyed on the content so a retry of the same transcript to the same
+      // recipients is one operation rather than two copies.
+      const idempotencyKey = await idempotencyKeyFor([
+        "transcript",
+        toList.slice().sort().join(","),
+        safeTranscript,
+      ]);
 
-    if (!resendResponse.ok) {
-      const errText = await resendResponse.text();
-      console.error("[send-transcript-email] Resend error:", redactVendorError(errText));
-      throw new Error("Failed to send email. Please try again.");
+      const sent = await sendEmail(
+        acs,
+        {
+          to: toList.map((address) => ({ address })),
+          subject,
+          plainText: bodyText,
+          html: bodyHtml,
+          idempotencyKey,
+        },
+        redactVendorError,
+      );
+
+      if (!sent.accepted) {
+        console.error("[send-transcript-email] ACS refused the message:", sent.error);
+        throw new Error("Failed to send email. Please try again.");
+      }
+    } else {
+      const resendResponse = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: FROM_ADDRESS,
+          to: toList,
+          subject,
+          text: bodyText,
+          html: bodyHtml,
+        }),
+      });
+
+      if (!resendResponse.ok) {
+        const errText = await resendResponse.text();
+        console.error("[send-transcript-email] Resend error:", redactVendorError(errText));
+        throw new Error("Failed to send email. Please try again.");
+      }
     }
 
     return new Response(

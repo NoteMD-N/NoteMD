@@ -202,9 +202,23 @@ const LetterView = () => {
         action: AUDIT_ACTIONS.LETTER_EMAILED,
         resource: "letter",
         resourceId: letter.id,
-        detail: { recipients: data.sent_to?.length || 0, status: letter.status },
+        detail: {
+          recipients: data.sent_to?.length || 0,
+          status: letter.status,
+          delivery_status: data.delivery_status ?? "unknown",
+        },
       });
-      toast.success(`Letter emailed to ${data.sent_to?.length || 0} recipient(s)`);
+      // "delivered" is confirmed by the provider. "pending" means it was
+      // accepted but delivery is not yet confirmed, and saying "sent" there
+      // would tell a clinician something we do not know.
+      const count = data.sent_to?.length || 0;
+      if (data.delivery_status === "pending") {
+        toast.success(
+          `Letter accepted for delivery to ${count} recipient(s). Delivery is still being confirmed.`,
+        );
+      } else {
+        toast.success(`Letter emailed to ${count} recipient(s)`);
+      }
     } catch (err: any) {
       const msg = err.message || "Failed to send email";
       void logAudit({

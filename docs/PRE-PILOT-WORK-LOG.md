@@ -20,14 +20,14 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 1 | Azure OpenAI migration | code complete — awaiting gpt-4o-mini deployment and residency sign-off | 0.7 d |
 | 3 | Deepgram unchanged (EU + `mip_opt_out`) | done — regression tests already in place | — |
 | 4 | Identifier minimisation to AI providers | done | 0.6 d |
-| 2 | Azure Communication Services email | **on hold — ACS Email is being retired, see below** | 0.2 d |
+| 2 | Azure Communication Services email | code complete — awaiting connection string and a sending domain | 1.1 d |
 | 6 | Draft/Reviewed workflow verification | done — F-001 found and closed | 0.5 d |
 | 7 | Wrong-patient / concurrency testing | done — 2 defects found and fixed | 1.0 d |
 | 8 | Remaining security and configuration | mostly done — see below | 1.9 d |
 | 9 | Backups, recovery test, retention proposal | done — recovery test PASSED | 0.7 d |
 | 10 | Final documentation and evidence pack | not started | — |
 
-**Effort to date: 8.0 d**
+**Effort to date: 9.1 d**
 
 ---
 
@@ -200,7 +200,9 @@ external recipients. Exchange Online is intended for person-to-person mail
 rather than application sending. The remaining options are third-party
 providers — which is what Resend already is.
 
-**Recommendation:** keep Resend for now. It is already configured for the EU
+**Client decision (29 September 2026): proceed on ACS regardless.** Recorded here so the constraint is visible in the assurance pack rather than discovered in 2028. The provider-specific code is confined to `_shared/acs-email.ts` and two call sites, so a later move is small.
+
+The original recommendation, for the record: keep Resend for now. It is already configured for the EU
 region with no retention, it is paid for, and it works. Treat Microsoft 365 /
 Exchange Online via the Graph API as the eventual destination if the client
 wants email inside his Microsoft tenant, since the domain already runs on
