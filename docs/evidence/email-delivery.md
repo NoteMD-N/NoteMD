@@ -102,3 +102,60 @@ than relying on inheritance:
 
 This should be re-tested after the record propagates, and the result recorded
 here.
+
+
+## Final state — 29 September 2026
+
+After adding an explicit DMARC record at `_dmarc.mail.notemd.co.uk`, a further
+test message still arrived in the junk folder of a personal Outlook mailbox.
+
+### Configuration: verified complete
+
+| Control | Status | How verified |
+| --- | --- | --- |
+| SPF | pass | observed in received headers |
+| DKIM | pass, 2048-bit, aligned | observed in received headers |
+| DMARC record | valid, `p=quarantine`, relaxed alignment | published and resolving on four public resolvers |
+| DMARC alignment | both mechanisms match the From domain | `header.d` and envelope-from are both `mail.notemd.co.uk` |
+| External report authorisation | published | `mail.notemd.co.uk._report._dmarc.onsecureserver.net` |
+
+No configuration defect remains that could be identified.
+
+### Not yet confirmed
+
+A `dmarc=pass` verdict has not been observed on a message sent *after* the
+policy was published. Alignment and policy make it the expected outcome, but
+that is inference, not observation. Two ways to close it:
+
+- read `Authentication-Results` from a received test message, or
+- read the DMARC aggregate reports, which state pass rates directly and
+  arrive within roughly 24 hours.
+
+### Assessment
+
+The residual cause is most likely **sender reputation**. The domain sent its
+first message the same day, and large consumer providers weight sending
+history heavily regardless of authentication quality. Reputation builds over
+weeks of consistent, low-volume sending and cannot be fixed with further DNS
+changes.
+
+### Consequence for the pilot
+
+This is the substantive finding, and it is a clinical-safety matter rather
+than a deliverability inconvenience: **a letter filed into a recipient's junk
+folder is not seen, while the sender believes it was sent.** NoteMD has no
+visibility of junk placement, and bounce handling is not implemented.
+
+If reaching a personal Outlook mailbox requires this much work, reaching NHS
+mail systems reliably from a new third-party domain is a material risk. The
+options, in the order they should be considered:
+
+1. **NHSmail or the Trust's approved secure pathway** for patient-identifiable
+   correspondence. This is what a Trust is likely to require in any case.
+2. **Export into the Trust's clinical record** rather than email, which is the
+   workflow the client has already described as preferred.
+3. **Email as a convenience channel only**, with the clinician told explicitly
+   that delivery is not confirmed.
+
+Sending clinical letters from a newly provisioned domain, without bounce
+handling, should not be relied upon for the pilot.
