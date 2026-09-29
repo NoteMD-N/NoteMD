@@ -273,7 +273,7 @@ three days, so no events should have been lost.
    August — it is already configurable, audio already defaults to thirty days,
    and a scheduled job enforces it. The real gap is that NoteMD has no concept
    of an organisation, so every setting is per user account. That is what needs
-   building, and it is smaller than a retention redesign. Estimated 3.5–4.5 days.
+   building, and it is a smaller piece of work than a retention redesign.
 5. **Deleting audio once a letter is exported.** You asked for this. I would
    make it configurable and default it to *off*, with a short grace period. The
    recording is the only evidence of what was actually said; if a letter is
@@ -309,9 +309,9 @@ Seven defects found and fixed: one critical cross-tenant data exposure, two
 privilege escalations, two clinical-safety defects, one log disclosure, one
 data-loss and wrong-patient recovery bug.
 
-I will send a consolidated note on hours before the feature freeze. Nothing
-here changes the sequence you set out: development, internal review, automated
-testing, final documentation, freeze, then the independent penetration test.
+Nothing here changes the sequence you set out: development, internal review,
+automated testing, final documentation, freeze, then the independent
+penetration test.
 
 Happy to talk any of this through.
 
