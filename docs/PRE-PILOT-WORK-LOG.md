@@ -20,7 +20,7 @@ Status key: **done** · **in progress** · **blocked** (waiting on the client) �
 | 1 | Azure OpenAI migration | code complete — awaiting gpt-4o-mini deployment and residency sign-off | 0.7 d |
 | 3 | Deepgram unchanged (EU + `mip_opt_out`) | done — regression tests already in place | — |
 | 4 | Identifier minimisation to AI providers | done | 0.6 d |
-| 2 | Azure Communication Services email | not started | — |
+| 2 | Azure Communication Services email | **on hold — ACS Email is being retired, see below** | 0.2 d |
 | 6 | Draft/Reviewed workflow verification | done — F-001 found and closed | 0.5 d |
 | 7 | Wrong-patient / concurrency testing | done — 2 defects found and fixed | 1.0 d |
 | 8 | Remaining security and configuration | mostly done — see below | 1.9 d |
@@ -173,6 +173,44 @@ their day.
 convenience a later change reintroduces without anyone noticing.
 
 ---
+
+## Decision needed: ACS Email is a retiring product
+
+Found 29 September 2026, from the retirement banner on the client's own
+`Emails-NoteMD` resource.
+
+Microsoft has announced the retirement of Azure Communication Services as a
+standalone offering, **effective 30 September 2028**, and ACS Email is on the
+retired list rather than the breaking-change list. Two details matter:
+
+- **From 23 October 2026** — about three weeks away — new customers cannot
+  sign up for the retiring services. The client's resource already exists, so
+  it is inside the grandfathering window and can continue to be used.
+- Microsoft's own guidance is explicit: *"We recommend using the two-year
+  retirement period to migrate existing workloads off ACS Email rather than
+  onboarding new solutions."*
+
+So item 2 as scoped would move clinical email off a working provider and onto
+one the vendor is telling customers to leave, with a migration to do again
+before September 2028.
+
+Microsoft's suggested replacements do not fit this use case either. High
+Volume Email sends **within the tenant only**, and clinical letters go to
+external recipients. Exchange Online is intended for person-to-person mail
+rather than application sending. The remaining options are third-party
+providers — which is what Resend already is.
+
+**Recommendation:** keep Resend for now. It is already configured for the EU
+region with no retention, it is paid for, and it works. Treat Microsoft 365 /
+Exchange Online via the Graph API as the eventual destination if the client
+wants email inside his Microsoft tenant, since the domain already runs on
+Microsoft 365. This also sits closer to where an NHS Trust would end up,
+because a Trust will generally require NHSmail or an approved secure pathway
+for patient-identifiable mail regardless of what we build.
+
+The work already agreed for item 2 — delivery status surfaced to the
+clinician, idempotent retries, and audit metadata — is worth doing on
+whichever provider is chosen, and is independent of this decision.
 
 ## Client actions outstanding
 
