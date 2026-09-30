@@ -34,7 +34,5 @@ pandoc "$SRC" --standalone --from=gfm --to=html5 \
   --print-to-pdf="$TMP/doc.pdf" "file://$TMP/doc.html" >/dev/null 2>&1
 
 mv "$TMP/doc.pdf" "$OUT"
-echo "wrote $OUT ($(python3 -c "
-import re,sys
-d=open('$OUT','rb').read()
-print(f'{len(d)/1024:.0f} KB, {len(re.findall(rb\"/Type\s*/Page[^s]\", d))} pages')"))"
+SIZE_PAGES=$(python3 -c "import re,sys; d=open(sys.argv[1],'rb').read(); pages=len(re.findall(b'/Type' + rb'\\s*' + b'/Page[^s]', d)); print('{:.0f} KB, {} pages'.format(len(d)/1024, pages))" "$OUT")
+echo "wrote $OUT ($SIZE_PAGES)"
