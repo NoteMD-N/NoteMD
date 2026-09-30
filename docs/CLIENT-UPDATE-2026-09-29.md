@@ -158,6 +158,14 @@ once, now, than twice.
 I have pointed letter refinement at your existing `gpt-4o` deployment, so the
 missing `gpt-4o-mini` no longer blocks anything.
 
+For now I am treating `notemd-eu` as the working resource for both
+environments, since it is the only one with deployments — the UK South
+resource is empty. That is fine for testing, but your own requirement is
+separate credentials per environment, so production and staging should end up
+with their own resources before the pilot. I will set that up once you have
+confirmed the residency position, since there is no point provisioning twice
+if the answer changes.
+
 ---
 
 ## 6. Email — working, but with a finding you should weigh
@@ -283,17 +291,54 @@ three days, so no events should have been lost.
 
 ---
 
-## 9. What I still need
+## 9. Production access and recovery — two things to act on
 
-- **Azure:** which resource is production, and a production Deepgram account
-  under your company rather than mine.
-- **Point-in-time recovery:** confirm whether it is enabled on production.
-- **Production access:** who currently has administrative access to Supabase,
-  Render, Deepgram and Azure, so I can complete the access register.
-- **Retired Google Cloud Run service:** still needs deleting from your Google
-  Cloud account.
+I compiled the access register from the Supabase management interface rather
+than asking you to gather it. It produced two findings worth acting on this
+week.
 
----
+### Neither administrative account has multi-factor authentication
+
+Two accounts hold unrestricted access to the production clinical database:
+your Owner account and my Administrator account. **Neither has MFA enabled.**
+
+NoteMD requires MFA of its clinicians. The two accounts that can read every
+patient record do not have it. A single password compromise on either exposes
+the whole dataset and bypasses every other control in place, Row Level
+Security included, because an organisation owner reads the database directly.
+
+This will be raised by any competent penetration test, and it is a DSPT
+expectation. It costs nothing to fix: Supabase Dashboard → Account Preferences
+→ Security, on both accounts. I will enable it on mine today; please do the
+same on yours.
+
+Separately, the Owner account is a personal `yahoo.com` address rather than
+one on a domain the company controls. That makes account recovery dependent on
+a consumer mailbox outside the business, and leaves no administrative route to
+recover the production environment if you were unavailable. I would move Owner
+to an address on `notemd.co.uk`, which already runs on Microsoft 365.
+
+### Point-in-time recovery is not enabled
+
+I checked rather than asked: production takes daily backups, holds eight of
+them, archives write-ahead logs, and sits in `eu-west-1` — but point-in-time
+recovery is switched off.
+
+**That means the recovery point objective is up to 24 hours.** A failure late
+in the working day would lose that day's consultations, transcripts and
+letters. Those cannot be reconstructed: the consultation is over and the audio
+is not retained indefinitely.
+
+Point-in-time recovery is a paid Supabase add-on that reduces the objective to
+roughly two minutes. It is your decision, but the cost is modest against
+losing a day of clinical documentation, and a pilot organisation is likely to
+ask what our recovery point objective is.
+
+### Already resolved
+
+Deepgram now runs under your own account rather than mine. The retired Google
+Cloud Run transcription service sits in my personal cloud account, holds no
+current clinical data, and I am decommissioning it.
 
 ## 10. Where this leaves the programme
 
