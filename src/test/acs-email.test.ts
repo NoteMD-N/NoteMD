@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   idempotencyKeyFor,
+  isPlausibleAccessKey,
   parseConnectionString,
   resolveAcsConfig,
   sendUrl,
@@ -129,7 +130,8 @@ describe("connection string", () => {
   it("keeps the base64 padding on the key", () => {
     // The key contains "=" characters. Splitting on every "=" instead of the
     // first truncates it, and the result is a 401 rather than a parse error.
-    const padded = "YWJjZA==";
+    // Realistic length, so the plausibility check is not what is under test.
+    const padded = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=";
     expect(parseConnectionString(`endpoint=${ENDPOINT};accesskey=${padded}`)?.accessKey).toBe(
       padded,
     );
@@ -234,5 +236,58 @@ describe("both email functions use the provider selection", () => {
     const src = read("send-letter-email");
     expect(src).toMatch(/pollDelivery\(/);
     expect(src).toMatch(/delivery_status/);
+  });
+});
+
+describe("a placeholder or truncated key must not count as configured", () => {
+  const ENDPOINT = "https://emails-notemd.uk.communication.azure.com";
+  const env = (vars: Record<string, string>) => (k: string) => vars[k];
+
+  /**
+   * This happened. A connection string was pasted from a command example with
+   * the key still written as an ellipsis. It parsed — it is simply a short
+   * string — so the application would have switched live clinical email to a
+   * provider that rejects every request. Being unconfigured is strictly
+   * better: the previous provider keeps working.
+   */
+  it("rejects the ellipsis placeholder that was actually pasted", () => {
+    expect(parseConnectionString(`endpoint=${ENDPOINT}/;accesskey=…`)).toBeNull();
+  });
+
+  it("rejects other placeholder shapes", () => {
+    for (const k of ["<key>", "your-access-key", "xxx", "TODO", "...", ""]) {
+      expect(parseConnectionString(`endpoint=${ENDPOINT};accesskey=${k}`), k).toBeNull();
+    }
+  });
+
+  it("rejects a key truncated on paste", () => {
+    // The first 20 characters of a real key: well-formed base64, too short.
+    expect(parseConnectionString(`endpoint=${ENDPOINT};accesskey=dGVzdC1hY2Nlc3Mta2V5`)).toBeNull();
+  });
+
+  it("accepts a real-length base64 key", () => {
+    const real = "a".repeat(40) + "==";
+    expect(parseConnectionString(`endpoint=${ENDPOINT};accesskey=${real}`)?.accessKey).toBe(real);
+  });
+
+  it("leaves the previous provider in place when the key is a placeholder", () => {
+    // The consequence that matters: resolveAcsConfig returns null, so the
+    // caller falls through to the existing provider rather than failing sends.
+    expect(
+      resolveAcsConfig(
+        env({
+          ACS_CONNECTION_STRING: `endpoint=${ENDPOINT};accesskey=…`,
+          ACS_SENDER_ADDRESS: "DoNotReply@mail.notemd.co.uk",
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("judges the key by shape, not by guessing correctness", () => {
+    // A wrong-but-well-formed key is accepted here and fails visibly on first
+    // use; only implausible values are screened out.
+    expect(isPlausibleAccessKey("b".repeat(44))).toBe(true);
+    expect(isPlausibleAccessKey("short")).toBe(false);
+    expect(isPlausibleAccessKey("has spaces in it and is quite long indeed")).toBe(false);
   });
 });

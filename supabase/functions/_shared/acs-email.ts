@@ -113,7 +113,38 @@ export function parseConnectionString(
 
   if (!endpoint || !accessKey) return null;
   if (!/^https:\/\//i.test(endpoint)) return null;
+
+  // Reject a key that cannot be a real one.
+  //
+  // A connection string is pasted from the portal, often out of a command
+  // example, and a truncated or placeholder value parses perfectly happily —
+  // it is simply a short string. Treating that as configured would switch
+  // live email to a provider that rejects every request, which is worse than
+  // not being configured at all. An ACS access key is base64 and long; a
+  // placeholder such as "…" or "<key>" is neither.
+  if (!isPlausibleAccessKey(accessKey)) return null;
+
   return { endpoint, accessKey };
+}
+
+/**
+ * Whether a value could be a real ACS access key.
+ *
+ * Deliberately a shape check rather than a verification: the only way to know
+ * a key is correct is to use it, and that cannot be done while deciding
+ * whether to be configured at all. This catches the failure that actually
+ * happens — a placeholder or a truncated paste — not a wrong-but-well-formed
+ * key, which fails visibly on first use.
+ */
+export function isPlausibleAccessKey(value: string): boolean {
+  const key = value.trim();
+  // A real ACS key is base64 of a 32-byte secret, so 44 characters or more.
+  // The floor is set below that rather than at it: the purpose is to catch
+  // placeholders and truncated pastes, not to encode an assumption about key
+  // length that a future format change could invalidate.
+  if (key.length < 32) return false;
+  if (!/^[A-Za-z0-9+/=]+$/.test(key)) return false;
+  return true;
 }
 
 /** Base64 of the SHA-256 digest of the exact bytes being sent. */
