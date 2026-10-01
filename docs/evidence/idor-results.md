@@ -1,6 +1,6 @@
 # Cross-user / IDOR test results
 
-Run: 2026-09-17T10:54:15.187Z
+Run: 2026-10-01T13:26:12.964Z
 Target: toeurvqqucloareeujfa (staging, synthetic data)
 
 Every row is an access attempt that must be refused.
@@ -8,8 +8,8 @@ Every row is an access attempt that must be refused.
 | Scenario | Actor | Target | Blocked | Observed |
 | --- | --- | --- | --- | --- |
 | List all letters | Clinician A | B's letter | yes | 1 row(s), none belonging to B |
-| Fetch letter by manipulated id | Clinician A | letter 6fdc5f50… | yes | 0 row(s) returned |
-| Fetch recording by manipulated id | Clinician A | recording 0a34869b… | yes | 0 row(s) returned |
+| Fetch letter by manipulated id | Clinician A | letter d8c46ecb… | yes | 0 row(s) returned |
+| Fetch recording by manipulated id | Clinician A | recording 013a434c… | yes | 0 row(s) returned |
 | Update another clinician's letter | Clinician A | B's letter | yes | 0 row(s) affected; content unchanged |
 | Delete another clinician's recording | Clinician A | B's recording | yes | row still present |
 | Download another clinician's audio | Clinician A | B's audio object | yes | error: Object not found |
