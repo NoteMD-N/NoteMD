@@ -7,6 +7,7 @@ import {
   buildBatchUrl,
 } from "../_shared/transcription-policy.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { assessTranscript } from "../_shared/transcription-quality.ts";
 import {
   authHeaders,
   chatCompletionsUrl,
@@ -167,8 +168,17 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
 
   // response_format=text returns a bare string body, not JSON.
   const text = (await resp.text()).trim();
-  if (!text) throw new Error("No speech detected");
-  return text;
+
+  // The model does not return nothing when given nothing: on silence it emits
+  // plausible speech, and often the biasing prompt itself. Rejecting that is
+  // the difference between a clinician seeing an empty transcript and a
+  // clinician signing a letter containing words nobody said.
+  const verdict = assessTranscript(text, CLINICAL_PROMPT);
+  if (!verdict.usable) {
+    console.warn(`[transcribe] discarded transcript: ${verdict.reason}`);
+    throw new Error("No speech detected");
+  }
+  return verdict.text;
 }
 
 // Dictation transcription: medical-domain ASR via private Cloud Run service.

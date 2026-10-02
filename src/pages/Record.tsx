@@ -3,6 +3,12 @@ import { useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useInactivity } from "@/hooks/useInactivityTimeout";
+import {
+  AudioLevelMonitor,
+  levelWarning,
+  shouldTranscribeSegment,
+  type MicLevelState,
+} from "@/lib/audio-level";
 import { letterRoute } from "@/lib/letter-route";
 import { readPhi, writePhi, clearPhi, isSnapshotFresh, listPhiSlots, tabId } from "@/lib/local-phi";
 import { Button } from "@/components/ui/button";
@@ -40,26 +46,27 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import {
-  Mic,
-  Square,
-  Loader2,
-  FileText,
-  RotateCcw,
-  Pause,
-  Play,
-  Upload,
-  Stethoscope,
-  PenLine,
-  WifiOff,
-  Wifi,
   AlertTriangle,
-  ChevronRight,
   ChevronLeft,
-  LayoutTemplate,
+  ChevronRight,
   Eye,
-  Pencil,
-  Sparkles,
+  FileText,
+  LayoutTemplate,
+  Loader2,
   Mail,
+  Mic,
+  MicOff,
+  Pause,
+  PenLine,
+  Pencil,
+  Play,
+  RotateCcw,
+  Sparkles,
+  Square,
+  Stethoscope,
+  Upload,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 
 type RecordMode = "consultation" | "dictation";
@@ -256,6 +263,17 @@ const Record = () => {
    * has changed since.
    */
   const recordingSessionRef = useRef<string>("initial");
+
+  /**
+   * Microphone level, watched while recording.
+   *
+   * The transcription models do not return nothing when given nothing — on
+   * silence they produce fluent invented text. Measuring the signal lets us
+   * decline to send silence, and warn the clinician while they can still fix
+   * a muted or distant microphone.
+   */
+  const levelMonitorRef = useRef<AudioLevelMonitor | null>(null);
+  const [micLevel, setMicLevel] = useState<MicLevelState>("ok");
   // WebSocket reconnection state
   const pendingChunksRef = useRef<Blob[]>([]); // chunks captured during disconnect
   const reconnectAttemptRef = useRef(0);
@@ -558,6 +576,21 @@ const Record = () => {
     if (!isRecording) return;
     return suspendInactivity("recording");
   }, [isRecording, suspendInactivity]);
+
+  // Surface the microphone level while recording. The monitor only reports a
+  // problem once the level has stayed low for several seconds, so ordinary
+  // pauses between sentences do not trigger it.
+  useEffect(() => {
+    if (!isRecording) {
+      setMicLevel("ok");
+      return;
+    }
+    const iv = setInterval(() => {
+      const monitor = levelMonitorRef.current;
+      if (monitor) setMicLevel(monitor.state());
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [isRecording]);
 
   // Applies a recovered snapshot to the current form so the user can save it as
   // a draft or generate a letter from the recovered transcript. Audio isn't
@@ -931,6 +964,11 @@ const Record = () => {
       }
       wsRef.current = ws;
       streamRef.current = stream;
+
+      const levelMonitor = new AudioLevelMonitor();
+      levelMonitor.start(stream);
+      levelMonitorRef.current = levelMonitor;
+      setMicLevel("ok");
       chunksRef.current = [];
       if (ws) attachWebSocketHandlers(ws);
 
@@ -994,6 +1032,21 @@ const Record = () => {
             const parts = segmentChunksRef.current;
             segmentChunksRef.current = [];
             if (parts.length === 0) return;
+
+            // Peak rather than average: one short sentence in ten seconds is
+            // quiet on average and must still be transcribed. When no
+            // measurement is available the segment is sent, which is the safe
+            // direction — a missing guard should not lose dictation.
+            const monitor = levelMonitorRef.current;
+            const peak = monitor?.takePeak() ?? Number.POSITIVE_INFINITY;
+            if (monitor && !monitor.unavailable && !shouldTranscribeSegment(peak)) {
+              console.warn(
+                `[Segment] Skipped: peak ${peak.toFixed(1)} dBFS is below the floor. ` +
+                  "Silence is not sent for transcription.",
+              );
+              return;
+            }
+
             const blob = new Blob(parts, { type: "audio/webm" });
             void transcribeSegmentAndAppend(blob);
           };
@@ -1122,6 +1175,9 @@ const Record = () => {
   const cleanup = useCallback(() => {
     isStoppingRef.current = true;
     isPausedRef.current = false;
+
+    levelMonitorRef.current?.stop();
+    levelMonitorRef.current = null;
 
     if (timerRef.current) clearInterval(timerRef.current);
     if (keepAliveRef.current) clearInterval(keepAliveRef.current);
@@ -2090,6 +2146,25 @@ const Record = () => {
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)] p-6">
               <div className="flex flex-col items-center gap-6">
                 {/* Status label */}
+                {/* Microphone level. Shown only while recording and only
+                    after the level has been low for several seconds, so it
+                    cannot be mistaken for ordinary pauses between sentences.
+                    Near-silent audio is the condition under which the
+                    transcription model invents text. */}
+                {isRecording && micLevel !== "ok" && (
+                  <div
+                    role="status"
+                    className={`w-full mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                      micLevel === "silent"
+                        ? "border-red-300 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+                        : "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+                    }`}
+                  >
+                    <MicOff className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                    <span>{levelWarning(micLevel)}</span>
+                  </div>
+                )}
+
                 <div
                   className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
                     processing
