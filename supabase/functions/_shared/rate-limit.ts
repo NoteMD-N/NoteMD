@@ -19,10 +19,17 @@ export const RATE_LIMITS = {
   "deepgram-token": { limit: 120, windowSeconds: 3600 },
 
   /**
-   * Segment transcription. A long consultation is transcribed in many pieces,
-   * so this is the highest of the set by some distance.
+   * Segment transcription. Enhanced dictation cuts the audio into ~10 second
+   * segments, so one hour of continuous dictation is about 360 calls on its
+   * own, plus a full-audio pass per consultation and up to three attempts for
+   * any segment that has to be retried.
+   *
+   * At 400 a clinician dictating steadily for an hour was close enough to the
+   * ceiling to reach it, and a refusal here does not degrade gracefully — it
+   * loses ten seconds of a consultation. The limit is abuse protection, so it
+   * belongs well clear of clinical use.
    */
-  "transcribe-audio": { limit: 400, windowSeconds: 3600 },
+  "transcribe-audio": { limit: 1500, windowSeconds: 3600 },
 
   /** Letter generation — the expensive model call. */
   "generate-letter": { limit: 60, windowSeconds: 3600 },

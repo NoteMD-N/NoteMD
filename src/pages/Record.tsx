@@ -10,6 +10,7 @@ import {
   type MicLevelState,
 } from "@/lib/audio-level";
 import { letterRoute } from "@/lib/letter-route";
+import { SegmentAssembler, appendSegments } from "@/lib/segment-assembly";
 import { readPhi, writePhi, clearPhi, isSnapshotFresh, listPhiSlots, tabId } from "@/lib/local-phi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -251,6 +252,24 @@ const Record = () => {
   const segmentChunksRef = useRef<Blob[]>([]);
   const segmentTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const segmentInFlightRef = useRef(0);
+  /**
+   * Orders segment results and records the ones that never arrived.
+   *
+   * Segment requests run concurrently, so without this the transcript is
+   * assembled in completion order rather than the order the words were
+   * spoken, and a failed segment removes ten seconds of the consultation
+   * leaving nothing a reader could notice.
+   */
+  const segmentAssemblerRef = useRef(new SegmentAssembler());
+  /**
+   * Set when the clinician types into the transcript themselves.
+   *
+   * It decides what we are allowed to do about a gap: their words may be
+   * warned about but never overwritten by a re-transcription.
+   */
+  const transcriptEditedRef = useRef(false);
+  /** Gaps that could not be recovered — surfaced on the review screen. */
+  const [segmentGaps, setSegmentGaps] = useState(0);
   /**
    * Identifies the current recording session.
    *
@@ -932,6 +951,9 @@ const Record = () => {
       isStoppingRef.current = false;
       isPausedRef.current = false;
       hadDisconnectRef.current = false;
+      segmentAssemblerRef.current = new SegmentAssembler();
+      transcriptEditedRef.current = false;
+      setSegmentGaps(0);
       setBufferedSeconds(0);
       setStreamHealth("connected");
 
@@ -1048,7 +1070,10 @@ const Record = () => {
             }
 
             const blob = new Blob(parts, { type: "audio/webm" });
-            void transcribeSegmentAndAppend(blob);
+            // Claimed here, on the thread that cuts the segments, so the
+            // sequence follows the order the words were spoken — not the
+            // order the concurrent transcription requests come back in.
+            void transcribeSegmentAndAppend(blob, segmentAssemblerRef.current.claim());
           };
           segmentRecorderRef.current = segRecorder;
           segRecorder.start();
@@ -1301,54 +1326,183 @@ const Record = () => {
     }
   }, []);
 
-  // Upload a single 10-second segment blob to MedASR and APPEND the returned
-  // text to the live transcript. Fire-and-forget: any single segment failing
-  // (network blip, no speech, etc) doesn't stop subsequent segments from
-  // running — the final Stop step still re-transcribes the full audio so
-  // nothing is lost.
-  const transcribeSegmentAndAppend = useCallback(async (segmentBlob: Blob) => {
-    if (segmentBlob.size < 2000) return; // too small to be real speech
-    // Captured now, checked before the result is used.
-    const session = recordingSessionRef.current;
-    segmentInFlightRef.current += 1;
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const fileName = `${user.id}/segments/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.webm`;
-      const { error: upErr } = await supabase.storage
-        .from("audio-recordings")
-        .upload(fileName, segmentBlob);
-      if (upErr) {
-        console.warn("[Segment] Upload failed:", upErr.message);
-        return;
+  /**
+   * Waits for outstanding segments, then makes good any that were lost.
+   *
+   * A segmented transcript is only as complete as its weakest segment, and a
+   * missing one leaves no trace: the text runs on, the letter reads normally,
+   * and nobody can tell that ten seconds of the consultation are gone. The
+   * whole recording is still here in the browser, so when a segment is lost
+   * the right answer is to transcribe the complete audio and use that.
+   *
+   * Except when the clinician has typed into the transcript themselves — then
+   * their words take precedence over anything we would replace them with, and
+   * all we may do is tell them where to look.
+   */
+  const settleSegmentsAndRecover = useCallback(async (): Promise<number> => {
+    const assembler = segmentAssemblerRef.current;
+
+    if (segmentInFlightRef.current > 0) {
+      setIsTranscribing(true);
+      // Capped so one stuck request cannot hold up the review screen. What
+      // changes is what happens next: a segment still in flight past the
+      // deadline is counted as a gap and recovered, rather than abandoned.
+      const deadline = Date.now() + 8000;
+      while (segmentInFlightRef.current > 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 200));
       }
-      const { data, error } = await supabase.functions.invoke("transcribe-audio", {
-        body: {
-          audio_path: fileName,
-          engine: "accurate",
-          recording_id: autoDraftRecordingIdRef.current ?? null,
-        },
-      });
-      if (error) {
-        console.warn("[Segment] Transcribe failed:", error.message);
-        return;
-      }
-      const text = ((data?.transcript || "") as string).trim();
-      if (!text) return;
-      // The consultation this segment belongs to has ended and another has
-      // begun. Appending here would put one patient's words into another
-      // patient's transcript, and from there into their letter.
-      if (recordingSessionRef.current !== session) {
-        console.warn("[Segment] Discarded: the recording session changed while it was in flight.");
-        return;
-      }
+      setIsTranscribing(false);
+    }
+
+    // Anything that arrived out of order is released; anything that never
+    // arrived is recorded as a gap.
+    const stranded = assembler.abandonOutstanding();
+    if (stranded.length > 0) {
       setTranscript((prev) => {
-        const next = prev ? `${prev} ${text}` : text;
+        const next = appendSegments(prev, stranded);
         transcriptRef.current = next;
         return next;
       });
+    }
+
+    if (!assembler.hasGaps) return 0;
+
+    console.warn(
+      `[Segment] ${assembler.gaps.length} segment(s) lost: ${assembler.gaps.join(", ")}. ` +
+        "Re-transcribing the full recording.",
+    );
+
+    if (transcriptEditedRef.current) {
+      // Their edits are not ours to discard, so the gap is flagged instead.
+      setSegmentGaps(assembler.gaps.length);
+      return assembler.gaps.length;
+    }
+
+    setIsTranscribing(true);
+    const recovered = await transcribeFinishedAudioForMedical();
+    setIsTranscribing(false);
+    // transcribeFinishedAudioForMedical replaces the transcript with the full
+    // pass on success. If it failed too, say so rather than presenting an
+    // incomplete transcript as if it were whole.
+    if (recovered) return 0;
+    setSegmentGaps(assembler.gaps.length);
+    return assembler.gaps.length;
+  }, [transcribeFinishedAudioForMedical]);
+
+  /**
+   * Transcribes one ~10 second segment and appends its text in sequence order.
+   *
+   * Every exit path settles the segment's sequence number. A segment that is
+   * lost must be *recorded* as lost: ten seconds of a consultation
+   * disappearing with nothing but a console warning is the failure this is
+   * built to prevent, because neither the clinician nor the letter shows any
+   * sign of it. The outcome drives the recovery pass at Stop.
+   */
+  const transcribeSegmentAndAppend = useCallback(async (segmentBlob: Blob, seq: number) => {
+    const assembler = segmentAssemblerRef.current;
+    // Captured now, checked before the result is used.
+    const session = recordingSessionRef.current;
+
+    /**
+     * Appends whatever is now contiguous, which may include results that
+     * arrived early and were held back.
+     *
+     * The session check lives here rather than at each call site because
+     * releasing is the only way text reaches the transcript, and every path
+     * to it crosses an await. The consultation this segment belongs to may
+     * have ended and another begun; appending then would put one patient's
+     * words into another patient's transcript, and from there into their
+     * letter. One guard on the choke point cannot be forgotten by a later
+     * exit path.
+     */
+    const release = (pieces: string[]) => {
+      if (pieces.length === 0) return;
+      if (recordingSessionRef.current !== session) {
+        console.warn(
+          `[Segment ${seq}] Discarded: the recording session changed while it was in flight.`,
+        );
+        return;
+      }
+      setTranscript((prev) => {
+        const next = appendSegments(prev, pieces);
+        transcriptRef.current = next;
+        return next;
+      });
+    };
+
+    // Deliberately skipped rather than lost: too short to carry speech, so it
+    // settles as empty and does not count as a gap.
+    if (segmentBlob.size < 2000) {
+      release(assembler.resolve(seq, ""));
+      return;
+    }
+
+    segmentInFlightRef.current += 1;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        release(assembler.fail(seq));
+        return;
+      }
+
+      // Derived from the session and sequence rather than a timestamp and a
+      // random suffix, so a retry overwrites its own upload instead of
+      // leaving an orphan, and the stored path identifies which ten seconds
+      // of the consultation it holds.
+      const fileName = `${user.id}/segments/${session}-${String(seq).padStart(4, "0")}.webm`;
+
+      // A segment has one chance at the audio: once the recording moves on,
+      // nothing else will transcribe these ten seconds. A transient upload
+      // error, a cold start or a rate-limit refusal is worth retrying before
+      // writing the segment off.
+      const ATTEMPTS = 3;
+      let text: string | null = null;
+      let lastError = "";
+      for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+        if (recordingSessionRef.current !== session) break;
+        if (attempt > 1) {
+          await new Promise((r) => setTimeout(r, 400 * Math.pow(3, attempt - 2)));
+        }
+
+        const { error: upErr } = await supabase.storage
+          .from("audio-recordings")
+          .upload(fileName, segmentBlob, { upsert: true });
+        if (upErr) {
+          lastError = `upload: ${upErr.message}`;
+          continue;
+        }
+
+        const { data, error } = await supabase.functions.invoke("transcribe-audio", {
+          body: {
+            audio_path: fileName,
+            engine: "accurate",
+            recording_id: autoDraftRecordingIdRef.current ?? null,
+          },
+        });
+        if (error) {
+          lastError = `transcribe: ${error.message}`;
+          continue;
+        }
+
+        text = ((data?.transcript || "") as string).trim();
+        break;
+      }
+
+      // Nothing more to do for a consultation that has already ended; the
+      // guard in release is what makes that safe, this just stops us
+      // recording a gap against an assembler nobody will read.
+      if (recordingSessionRef.current !== session) return;
+
+      if (text === null) {
+        console.warn(`[Segment ${seq}] Lost after ${ATTEMPTS} attempts (${lastError}).`);
+        release(assembler.fail(seq));
+        return;
+      }
+
+      release(assembler.resolve(seq, text));
     } catch (e) {
-      console.warn("[Segment] Failed:", e);
+      console.warn(`[Segment ${seq}] Failed:`, e);
+      if (recordingSessionRef.current === session) release(assembler.fail(seq));
     } finally {
       segmentInFlightRef.current = Math.max(0, segmentInFlightRef.current - 1);
     }
@@ -1580,21 +1734,15 @@ const Record = () => {
       return;
     }
 
-    // For accurate dictation, wait for any in-flight 10-second segments to
-    // finish transcribing so their text lands in the transcript before we
-    // move to review. Cap the wait so a stuck request doesn't block the UI.
-    if (useMedicalDictation && segmentInFlightRef.current > 0) {
-      setIsTranscribing(true);
-      const deadline = Date.now() + 8000;
-      while (segmentInFlightRef.current > 0 && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 200));
-      }
-      setIsTranscribing(false);
+    // For accurate dictation, let outstanding segments land in order and
+    // recover any that were lost, so the transcript the clinician reviews is
+    // the whole consultation.
+    if (useMedicalDictation) {
+      await settleSegmentsAndRecover();
     }
 
-    // Only fall back to a full-audio MedASR pass if the segmented approach
-    // yielded nothing (all segments failed, network was down, etc). Normal
-    // path: transcript is already built from segments; skip re-transcription.
+    // Nothing came back at all — every segment failed, or the network was
+    // down for the duration. A full pass is the only remaining source.
     if (useMedicalDictation && !transcriptRef.current) {
       const result = await transcribeFinishedAudioForMedical();
       if (!result) return; // toast already shown
@@ -1830,16 +1978,23 @@ const Record = () => {
       const blob = new Blob(chunksRef.current, { type: "audio/webm" });
 
       if (useMedicalDictation) {
-        // Let any in-flight rolling segments land first so their text is
-        // included, then only fall back to a full-audio pass if the segmented
-        // approach produced nothing at all.
-        if (segmentInFlightRef.current > 0) {
-          setIsTranscribing(true);
-          const deadline = Date.now() + 8000;
-          while (segmentInFlightRef.current > 0 && Date.now() < deadline) {
-            await new Promise((r) => setTimeout(r, 200));
-          }
-          setIsTranscribing(false);
+        // Let outstanding segments land in order and recover any that were
+        // lost, before this transcript becomes a letter.
+        const missing = await settleSegmentsAndRecover();
+
+        if (missing > 0) {
+          // Review is being skipped as a convenience, and an incomplete
+          // transcript is precisely when it should not be. Generating here
+          // would put a letter in front of a clinician with ten seconds of
+          // the consultation missing and nothing to show it. Divert to review
+          // so they see the warning and the text before signing anything.
+          toast.warning(
+            "Part of the recording could not be transcribed — please review the transcript before generating.",
+          );
+          setEditableTranscript(transcriptRef.current);
+          setStage("review");
+          autoProcessFiredRef.current = false;
+          return;
         }
 
         if (!transcriptRef.current) {
@@ -2439,6 +2594,9 @@ const Record = () => {
                   onChange={(e) => {
                     setTranscript(e.target.value);
                     transcriptRef.current = e.target.value;
+                    // Their words are now in here. A recovery pass may warn
+                    // about a gap but must not overwrite what they typed.
+                    transcriptEditedRef.current = true;
                   }}
                   placeholder={
                     useMedicalDictation
@@ -2530,6 +2688,21 @@ const Record = () => {
                       <strong>Check the end of the transcript</strong> for the summary section
                       (diagnosis, medications, plan) if you recorded one. That section is the
                       most important for letter accuracy.
+                    </div>
+                  </div>
+                )}
+                {segmentGaps > 0 && (
+                  <div className="mb-4 px-3 py-2 rounded-md bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 text-xs text-red-800 dark:text-red-300 flex gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <div>
+                      <strong>
+                        {segmentGaps === 1
+                          ? "About 10 seconds of this recording could not be transcribed."
+                          : `About ${segmentGaps * 10} seconds of this recording could not be transcribed.`}
+                      </strong>{" "}
+                      The transcript below is incomplete and the gap is not marked. Please
+                      read it against what you remember of the consultation and add anything
+                      missing before you generate the letter.
                     </div>
                   </div>
                 )}
