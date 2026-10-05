@@ -3,6 +3,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { redactError } from "../_shared/redact.ts";
 import {
+  authHeaders,
+  processingRegion,
+  resolveAiConfig,
+  transcriptionsUrl,
+} from "../_shared/ai-provider.ts";
+import {
   buildBatchUrlForHost,
   hasPrivacyOptOut,
   resolveStreamingHost,
@@ -124,6 +130,111 @@ async function probeStreaming(host: string, apiKey: string, wav: Uint8Array): Pr
   }
 }
 
+/** What the enhanced-dictation provider check reports. */
+type AiProbeResult = {
+  /** "azure" or "openai" — which provider the environment actually selects. */
+  provider: string;
+  /** Host only; never the key, and never the full URL with a deployment name. */
+  host: string;
+  /** The model (OpenAI) or deployment (Azure) that would serve a request. */
+  model: string;
+  reachable: boolean;
+  http_status: number | null;
+  key_accepted: boolean | null;
+  /** From the provider's own response headers, not from configuration. */
+  region: string | null;
+  latency_ms: number;
+};
+
+/**
+ * Probes the provider that serves enhanced dictation.
+ *
+ * This exists because "the secret is set" and "the switch took" are different
+ * claims. A key that is a placeholder, revoked, or scoped to the wrong
+ * resource is indistinguishable from a working one until something uses it,
+ * and the first thing to notice would otherwise be a clinician mid-consultation.
+ *
+ * Sends the same generated tone as the streaming probe — never patient data —
+ * and reads the processing region back out of the response headers, so
+ * residency is evidenced by the provider rather than asserted by us.
+ */
+async function probeAiProvider(wav: Uint8Array): Promise<AiProbeResult> {
+  const config = resolveAiConfig((name) => Deno.env.get(name));
+  const url = transcriptionsUrl(config, config.transcribeModel);
+  const host = (() => {
+    try { return new URL(url).host; } catch { return "invalid"; }
+  })();
+
+  const base: Omit<AiProbeResult, "reachable" | "http_status" | "key_accepted" | "region" | "latency_ms"> = {
+    provider: config.provider,
+    host,
+    model: config.transcribeModel,
+  };
+
+  const started = Date.now();
+  if (!config.apiKey) {
+    return { ...base, reachable: false, http_status: null, key_accepted: null, region: null, latency_ms: 0 };
+  }
+
+  try {
+    const form = new FormData();
+    form.append("file", new Blob([wav], { type: "audio/wav" }), "probe.wav");
+    form.append("model", config.transcribeModel);
+    form.append("response_format", "text");
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: authHeaders(config),
+      body: form,
+      signal: AbortSignal.timeout(20000),
+    });
+    const status = resp.status;
+    const region = processingRegion(resp.headers);
+    await resp.body?.cancel();
+
+    return {
+      ...base,
+      reachable: true,
+      http_status: status,
+      // 200 = accepted. 400 = authenticated but the tone was unusable, which
+      // still proves the credential. 401/403 = rejected. 404 on Azure means
+      // the deployment name is wrong, which is a configuration fault, not an
+      // auth one — reported as not-accepted so it cannot pass unnoticed.
+      key_accepted:
+        status === 200 || status === 400 ? true
+        : status === 401 || status === 403 || status === 404 ? false
+        : null,
+      region,
+      latency_ms: Date.now() - started,
+    };
+  } catch (e) {
+    console.error("[diagnostics] AI provider probe failed:", redactError(e));
+    return { ...base, reachable: false, http_status: null, key_accepted: null, region: null, latency_ms: Date.now() - started };
+  }
+}
+
+/** A sentence an operator can act on, for each AI-provider outcome. */
+function summariseAiProbe(probe: AiProbeResult): string {
+  if (!probe.reachable && probe.http_status === null && probe.latency_ms === 0) {
+    return "No key is configured for enhanced dictation.";
+  }
+  if (!probe.reachable) {
+    return `Could not reach ${probe.host}. Check network egress.`;
+  }
+  if (probe.key_accepted === false && probe.http_status === 404) {
+    return `Reached ${probe.host}, but "${probe.model}" is not deployed there. ` +
+      "Enhanced dictation will be failing until the deployment name matches.";
+  }
+  if (probe.key_accepted === false) {
+    return `${probe.host} rejected the credential. Enhanced dictation will be failing.`;
+  }
+  if (probe.key_accepted === true) {
+    const where = probe.region ? ` Processing region: ${probe.region}.` : "";
+    return `Enhanced dictation is working via ${probe.host} using "${probe.model}".${where}`;
+  }
+  return `${probe.host} returned HTTP ${probe.http_status}, which is neither an acceptance nor a rejection.`;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -173,11 +284,15 @@ serve(async (req) => {
     // Probe the configured endpoint, plus the global one for comparison. The
     // global probe is what distinguishes "key is region-scoped" from
     // "key is invalid" — the two look identical if you only test one.
-    const [configured, global] = await Promise.all([
+    const [configured, global, ai] = await Promise.all([
       probeStreaming(configuredHost, apiKey, wav),
       configuredHost === STREAMING_GLOBAL_HOST
         ? Promise.resolve(null)
         : probeStreaming(STREAMING_GLOBAL_HOST, apiKey, wav),
+      // Enhanced dictation runs through a different provider from live
+      // transcription, so a diagnostic that only covered the streaming path
+      // would report everything healthy while dictation was failing.
+      probeAiProvider(wav),
     ]);
 
     // Correlate the two results into a single verdict (shared, unit-tested).
@@ -203,6 +318,10 @@ serve(async (req) => {
       `[diagnostics] verdict=${verdict} configured=${configuredHost}(${configured.http_status}) ` +
       `global=${global ? global.http_status : "skipped"}`,
     );
+    console.log(
+      `[diagnostics] dictation provider=${ai.provider} host=${ai.host} model=${ai.model} ` +
+      `status=${ai.http_status} accepted=${ai.key_accepted} region=${ai.region ?? "n/a"}`,
+    );
 
     return new Response(
       JSON.stringify({
@@ -213,6 +332,9 @@ serve(async (req) => {
         configured_endpoint: configuredHost,
         expected_eu_endpoint: STREAMING_EU_HOST,
         checks: { configured, global },
+        // Enhanced dictation, reported separately because it is a different
+        // provider with its own credential, region and failure modes.
+        enhanced_dictation: { ...ai, summary: summariseAiProbe(ai) },
         checked_at: new Date().toISOString(),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },

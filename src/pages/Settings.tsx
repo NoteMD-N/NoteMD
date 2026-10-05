@@ -795,6 +795,44 @@ const Settings = () => {
                         : "—"}</dd>
                     </dl>
                   )}
+
+                  {/* Enhanced dictation runs through a different provider from
+                      live transcription, with its own credential and region.
+                      Reported separately so a healthy streaming check cannot
+                      be mistaken for dictation working. */}
+                  {residencyCheck.enhanced_dictation && (
+                    <div className="mt-4 pt-3 border-t border-black/10 dark:border-white/10">
+                      <p className="font-medium text-foreground">
+                        Enhanced dictation
+                        {residencyCheck.enhanced_dictation.key_accepted === true
+                          ? " — working"
+                          : residencyCheck.enhanced_dictation.key_accepted === false
+                          ? " — failing"
+                          : " — unverified"}
+                      </p>
+                      <p className="text-muted-foreground mt-1">
+                        {residencyCheck.enhanced_dictation.summary}
+                      </p>
+                      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        <dt>Endpoint</dt>
+                        <dd className="font-mono">{residencyCheck.enhanced_dictation.host}</dd>
+                        <dt>Model</dt>
+                        <dd className="font-mono">{residencyCheck.enhanced_dictation.model}</dd>
+                        {residencyCheck.enhanced_dictation.region && (
+                          <>
+                            <dt>Region</dt>
+                            <dd className="font-mono">{residencyCheck.enhanced_dictation.region}</dd>
+                          </>
+                        )}
+                        <dt>Response</dt>
+                        <dd className="font-mono">
+                          HTTP {residencyCheck.enhanced_dictation.http_status ?? "—"}
+                          {residencyCheck.enhanced_dictation.latency_ms != null &&
+                            ` · ${residencyCheck.enhanced_dictation.latency_ms}ms`}
+                        </dd>
+                      </dl>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
