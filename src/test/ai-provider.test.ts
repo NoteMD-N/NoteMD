@@ -10,6 +10,7 @@ import {
   transcriptionsUrl,
   isPlausibleAzureEndpoint,
   isPlausibleAzureKey,
+  classifyProviderStatus,
 } from "../../supabase/functions/_shared/ai-provider.ts";
 
 /**
@@ -310,5 +311,39 @@ describe("refusing to treat a placeholder as configuration", () => {
     // The pre-existing guarantee: a part-done migration must not take letter
     // generation down.
     expect(resolveAiConfig(env({ AZURE_OPENAI_ENDPOINT: AZURE })).provider).toBe("openai");
+  });
+});
+
+describe("what a probe status proves about the credential", () => {
+  it("treats a transcription as acceptance", () => {
+    expect(classifyProviderStatus(200)).toBe(true);
+  });
+
+  it("treats a complaint about the audio as acceptance", () => {
+    // The probe sends a one-second tone. A provider that authenticates and
+    // then rejects the audio has proved the credential, which is what is
+    // being tested.
+    expect(classifyProviderStatus(400)).toBe(true);
+  });
+
+  it("treats a missing deployment as a failure, not as inconclusive", () => {
+    // On Azure a 404 means the deployment name does not exist on the
+    // resource. Every dictation request would fail. Calling that
+    // "unverified" would let a broken switch pass the one check whose job
+    // is to catch it.
+    expect(classifyProviderStatus(404)).toBe(false);
+  });
+
+  it("treats a rejected credential as a failure", () => {
+    expect(classifyProviderStatus(401)).toBe(false);
+    expect(classifyProviderStatus(403)).toBe(false);
+  });
+
+  it("does not claim a verdict from a status that gives none", () => {
+    // A rate limit or a provider-side fault says nothing about the key, and
+    // reporting either as working or broken would be a guess.
+    for (const status of [429, 500, 502, 503]) {
+      expect(classifyProviderStatus(status), `status ${status}`).toBeNull();
+    }
   });
 });

@@ -4,6 +4,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { redactError } from "../_shared/redact.ts";
 import {
   authHeaders,
+  classifyProviderStatus,
   processingRegion,
   resolveAiConfig,
   transcriptionsUrl,
@@ -196,14 +197,8 @@ async function probeAiProvider(wav: Uint8Array): Promise<AiProbeResult> {
       ...base,
       reachable: true,
       http_status: status,
-      // 200 = accepted. 400 = authenticated but the tone was unusable, which
-      // still proves the credential. 401/403 = rejected. 404 on Azure means
-      // the deployment name is wrong, which is a configuration fault, not an
-      // auth one — reported as not-accepted so it cannot pass unnoticed.
-      key_accepted:
-        status === 200 || status === 400 ? true
-        : status === 401 || status === 403 || status === 404 ? false
-        : null,
+      // Shared with the module that builds the request, and unit tested there.
+      key_accepted: classifyProviderStatus(status),
       region,
       latency_ms: Date.now() - started,
     };

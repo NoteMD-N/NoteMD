@@ -213,3 +213,23 @@ export function authHeaders(cfg: AiConfig): Record<string, string> {
 export function processingRegion(headers: Headers): string | null {
   return headers.get("x-ms-region") || null;
 }
+
+/**
+ * What an HTTP status from a transcription probe proves about the credential.
+ *
+ * Returns true when the credential was accepted, false when it was rejected
+ * or the target does not exist, and null when the status says neither.
+ *
+ * 400 counts as accepted: the provider authenticated the request and then
+ * disliked the audio, which is the expected answer to a one-second test tone.
+ *
+ * 404 counts as REJECTED, not inconclusive. On Azure it means the deployment
+ * name does not exist on the resource — a configuration fault that breaks
+ * every request. Reporting it as "unverified" would let a broken switch pass
+ * a diagnostic whose entire purpose is to catch exactly that.
+ */
+export function classifyProviderStatus(status: number): boolean | null {
+  if (status === 200 || status === 400) return true;
+  if (status === 401 || status === 403 || status === 404) return false;
+  return null;
+}
