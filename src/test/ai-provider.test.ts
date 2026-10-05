@@ -8,6 +8,8 @@ import {
   processingRegion,
   resolveAiConfig,
   transcriptionsUrl,
+  isPlausibleAzureEndpoint,
+  isPlausibleAzureKey,
 } from "../../supabase/functions/_shared/ai-provider.ts";
 
 /**
@@ -30,7 +32,10 @@ const env = (vars: Record<string, string>) => (k: string) => vars[k];
 
 const AZURE = {
   AZURE_OPENAI_ENDPOINT: "https://notemd-eu.services.ai.azure.com/",
-  AZURE_OPENAI_API_KEY: "azure-key",
+  // Shaped like a real key, not "azure-key": a key too short to be genuine is
+  // treated as an unsubstituted placeholder and ignored, which is the point of
+  // isPlausibleAzureKey below.
+  AZURE_OPENAI_API_KEY: "0123456789abcdef0123456789abcdef",
 };
 
 describe("provider selection", () => {
@@ -100,7 +105,7 @@ describe("URL construction", () => {
 describe("authentication", () => {
   it("sends api-key to Azure and never a bearer token", () => {
     const h = authHeaders(resolveAiConfig(env(AZURE)));
-    expect(h["api-key"]).toBe("azure-key");
+    expect(h["api-key"]).toBe(AZURE.AZURE_OPENAI_API_KEY);
     expect(h.Authorization).toBeUndefined();
   });
 
@@ -195,5 +200,115 @@ describe("every call site routes through the module", () => {
       );
       expect(src, `${name} does not resolve a config`).toMatch(/resolveAiConfig/);
     }
+  });
+});
+
+/**
+ * A literal placeholder stored as a secret.
+ *
+ * `supabase secrets set AZURE_OPENAI_API_KEY='<the key>'` run verbatim out of
+ * a command example puts the angle brackets in the secret. The value is
+ * non-empty, so every truthy test calls it configured, and the system switches
+ * to a provider that rejects every request — taking down dictation and letter
+ * generation rather than degrading. It has happened in production on this
+ * project, on the email path and then on this one.
+ */
+describe("refusing to treat a placeholder as configuration", () => {
+  const AZURE = "https://notemd-eu.openai.azure.com";
+  const REAL_KEY = "a".repeat(84);
+
+  const env = (vars: Record<string, string>) => (name: string) => vars[name];
+
+  it("rejects the exact placeholder that caused the outage", () => {
+    expect(isPlausibleAzureKey("<the notemd-eu key>")).toBe(false);
+  });
+
+  it("rejects placeholders and truncated pastes generally", () => {
+    for (const bad of [
+      "",
+      "   ",
+      "<key>",
+      "<your-azure-key>",
+      "your-api-key-here",
+      "changeme",
+      "abc123",                    // too short to be a key
+      "a".repeat(31),              // one short of the floor
+      "a".repeat(40) + " " + "b".repeat(40), // two tokens: a bad paste
+    ]) {
+      expect(isPlausibleAzureKey(bad), `accepted ${JSON.stringify(bad)}`).toBe(false);
+    }
+  });
+
+  it("accepts the key shapes Azure actually issues", () => {
+    expect(isPlausibleAzureKey("0123456789abcdef0123456789abcdef")).toBe(true); // 32 hex
+    expect(isPlausibleAzureKey(REAL_KEY)).toBe(true);
+    // Surrounding whitespace from a paste is trimmed rather than treated as a
+    // broken value; only whitespace *inside* the key means a bad paste.
+    expect(isPlausibleAzureKey(`  ${REAL_KEY}  `)).toBe(true);
+    expect(isPlausibleAzureKey(`${REAL_KEY}\n`)).toBe(true);
+  });
+
+  it("rejects a placeholder endpoint", () => {
+    expect(isPlausibleAzureEndpoint("<endpoint>")).toBe(false);
+    expect(isPlausibleAzureEndpoint("notemd-eu.openai.azure.com")).toBe(false); // no scheme
+    expect(isPlausibleAzureEndpoint("http://notemd-eu.openai.azure.com")).toBe(false); // not https
+    expect(isPlausibleAzureEndpoint(AZURE)).toBe(true);
+  });
+
+  it("serves traffic on OpenAI rather than on a provider that would reject it", () => {
+    const config = resolveAiConfig(
+      env({ AZURE_OPENAI_ENDPOINT: AZURE, AZURE_OPENAI_API_KEY: "<the notemd-eu key>", OPENAI_API_KEY: "sk-real" }),
+    );
+    expect(config.provider).toBe("openai");
+    expect(config.apiKey).toBe("sk-real");
+  });
+
+  it("still switches to Azure when the key is real", () => {
+    const config = resolveAiConfig(
+      env({ AZURE_OPENAI_ENDPOINT: AZURE, AZURE_OPENAI_API_KEY: REAL_KEY }),
+    );
+    expect(config.provider).toBe("azure");
+    expect(config.base).toBe(AZURE);
+  });
+
+  it("does not let an explicit force insist on a broken provider", () => {
+    // Forcing is for choosing between two working configurations, not for
+    // demanding one that rejects every clinical request.
+    const config = resolveAiConfig(
+      env({ AI_PROVIDER: "azure", AZURE_OPENAI_ENDPOINT: AZURE, AZURE_OPENAI_API_KEY: "<key>" }),
+    );
+    expect(config.provider).toBe("openai");
+  });
+
+  it("does not fall back silently", () => {
+    // A silent fallback is how the wrong provider serves clinical traffic for
+    // a week before anyone reads a bill or a residency log.
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.join(" ")); };
+    try {
+      resolveAiConfig(env({ AZURE_OPENAI_ENDPOINT: AZURE, AZURE_OPENAI_API_KEY: "<key>" }));
+    } finally {
+      console.error = original;
+    }
+    expect(errors.join(" ")).toMatch(/placeholder/i);
+  });
+
+  it("says nothing when Azure was simply never configured", () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.join(" ")); };
+    try {
+      resolveAiConfig(env({ OPENAI_API_KEY: "sk-real" }));
+    } finally {
+      console.error = original;
+    }
+    expect(errors).toEqual([]);
+  });
+
+  it("treats an endpoint on its own as not configured, as before", () => {
+    // The pre-existing guarantee: a part-done migration must not take letter
+    // generation down.
+    expect(resolveAiConfig(env({ AZURE_OPENAI_ENDPOINT: AZURE })).provider).toBe("openai");
   });
 });

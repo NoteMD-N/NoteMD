@@ -48,21 +48,86 @@ const DEFAULT_AZURE_TRANSCRIBE_API_VERSION = "2025-03-01-preview";
 type Env = (name: string) => string | undefined;
 
 /**
+ * Whether a value could be a real Azure OpenAI endpoint.
+ *
+ * A placeholder such as `<endpoint>` is not an https URL, so the shape check
+ * is the whole test.
+ */
+export function isPlausibleAzureEndpoint(value: string): boolean {
+  const endpoint = value.trim();
+  if (!/^https:\/\//i.test(endpoint)) return false;
+  // No whitespace or angle brackets: those mean an unsubstituted placeholder,
+  // not a hostname.
+  return !/[\s<>]/.test(endpoint);
+}
+
+/**
+ * Whether a value could be a real Azure OpenAI API key.
+ *
+ * Deliberately a shape check rather than a verification: the only way to know
+ * a key is correct is to use it, and that cannot be done while deciding
+ * whether to be configured at all. This catches the failure that actually
+ * happens — a placeholder pasted out of a command example, or a truncated
+ * copy — not a wrong-but-well-formed key, which fails visibly on first use.
+ */
+export function isPlausibleAzureKey(value: string): boolean {
+  const key = value.trim();
+  // Azure keys are 32-character hex or longer base64-style strings. The floor
+  // catches placeholders and truncated pastes without encoding an assumption
+  // about length that a future key format could invalidate.
+  if (key.length < 32) return false;
+  // A real key is one token of key characters. Whitespace or angle brackets
+  // mean a placeholder like "<the key>" was stored verbatim.
+  return /^[A-Za-z0-9+/=_-]+$/.test(key);
+}
+
+/**
  * Reads the provider configuration from the environment.
  *
- * Azure is selected when it is fully configured — both an endpoint and a key.
- * A half-configured Azure (endpoint set, key missing) falls back to OpenAI
- * rather than failing at request time: a partial deployment must not take
- * letter generation down.
+ * Azure is selected only when it is usably configured — an endpoint and a key
+ * that could really be one. Anything less falls back to OpenAI rather than
+ * failing at request time, because the cost of guessing wrong is asymmetric: a
+ * fallback transcribes the consultation, while a provider that rejects every
+ * request takes down dictation and letter generation for everyone.
+ *
+ * The shape check on the key is there because setting a secret to a literal
+ * placeholder is a thing that happens — a command example run verbatim — and
+ * a non-empty placeholder is indistinguishable from configuration to a truthy
+ * test. It has caused a production outage on this project, on the email path
+ * before this one, which is why the same guard exists in acs-email.ts.
+ *
+ * An explicit AI_PROVIDER=azure does not bypass this. Forcing a provider is
+ * for choosing between two working configurations, not for insisting on a
+ * broken one, and the force is logged when it cannot be honoured so the
+ * fallback is never silent.
  */
 export function resolveAiConfig(env: Env): AiConfig {
   const azureEndpoint = (env("AZURE_OPENAI_ENDPOINT") || "").trim().replace(/\/+$/, "");
   const azureKey = (env("AZURE_OPENAI_API_KEY") || "").trim();
   const forced = (env("AI_PROVIDER") || "").trim().toLowerCase();
 
-  const azureConfigured = Boolean(azureEndpoint && azureKey);
-  const provider: AiProvider =
-    forced === "openai" ? "openai" : forced === "azure" || azureConfigured ? "azure" : "openai";
+  const azureUsable =
+    isPlausibleAzureEndpoint(azureEndpoint) && isPlausibleAzureKey(azureKey);
+
+  let provider: AiProvider;
+  if (forced === "openai") {
+    provider = "openai";
+  } else if (azureUsable) {
+    provider = "azure";
+  } else {
+    if (forced === "azure" || (azureEndpoint && azureKey)) {
+      // Something was configured but is not usable. Say so: a silent fallback
+      // is how a placeholder key goes unnoticed until someone reads a bill or
+      // a residency log and finds the wrong provider served the traffic.
+      console.error(
+        "[ai-provider] Azure is configured but not usable " +
+          `(endpoint ${isPlausibleAzureEndpoint(azureEndpoint) ? "ok" : "invalid or placeholder"}, ` +
+          `key ${isPlausibleAzureKey(azureKey) ? "ok" : "invalid or placeholder"}). ` +
+          "Falling back to OpenAI.",
+      );
+    }
+    provider = "openai";
+  }
 
   if (provider === "azure") {
     const letterDeployment = (env("AZURE_OPENAI_LETTER_DEPLOYMENT") || "gpt-4o").trim();
