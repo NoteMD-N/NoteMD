@@ -4,6 +4,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { redactError } from "../_shared/redact.ts";
 import {
   authHeaders,
+  chatCompletionsUrl,
   classifyProviderStatus,
   processingRegion,
   resolveAiConfig,
@@ -208,24 +209,78 @@ async function probeAiProvider(wav: Uint8Array): Promise<AiProbeResult> {
   }
 }
 
+/**
+ * Probes the deployment that writes letters.
+ *
+ * Transcription and letter generation use different deployments on the same
+ * resource, so verifying one says nothing about the other: a correct
+ * transcription deployment and a misnamed letter deployment is a working
+ * dictation that produces no letter. On Azure the wrong name is a 404
+ * DeploymentNotFound, which this is here to surface before a clinician meets
+ * it.
+ *
+ * Sends a fixed two-token prompt and asks for one token back — no patient
+ * data, and the smallest call that still proves the deployment answers.
+ */
+async function probeLetterModel(): Promise<AiProbeResult> {
+  const config = resolveAiConfig((name) => Deno.env.get(name));
+  const url = chatCompletionsUrl(config, config.letterModel);
+  const host = (() => {
+    try { return new URL(url).host; } catch { return "invalid"; }
+  })();
+
+  const base = { provider: config.provider, host, model: config.letterModel };
+  const started = Date.now();
+  if (!config.apiKey) {
+    return { ...base, reachable: false, http_status: null, key_accepted: null, region: null, latency_ms: 0 };
+  }
+
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { ...authHeaders(config), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: config.letterModel,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1,
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const status = resp.status;
+    const region = processingRegion(resp.headers);
+    await resp.body?.cancel();
+    return {
+      ...base,
+      reachable: true,
+      http_status: status,
+      key_accepted: classifyProviderStatus(status),
+      region,
+      latency_ms: Date.now() - started,
+    };
+  } catch (e) {
+    console.error("[diagnostics] letter model probe failed:", redactError(e));
+    return { ...base, reachable: false, http_status: null, key_accepted: null, region: null, latency_ms: Date.now() - started };
+  }
+}
+
 /** A sentence an operator can act on, for each AI-provider outcome. */
 function summariseAiProbe(probe: AiProbeResult): string {
   if (!probe.reachable && probe.http_status === null && probe.latency_ms === 0) {
-    return "No key is configured for enhanced dictation.";
+    return "No key is configured for the AI provider.";
   }
   if (!probe.reachable) {
     return `Could not reach ${probe.host}. Check network egress.`;
   }
   if (probe.key_accepted === false && probe.http_status === 404) {
     return `Reached ${probe.host}, but "${probe.model}" is not deployed there. ` +
-      "Enhanced dictation will be failing until the deployment name matches.";
+      "This will be failing until the deployment name matches.";
   }
   if (probe.key_accepted === false) {
-    return `${probe.host} rejected the credential. Enhanced dictation will be failing.`;
+    return `${probe.host} rejected the credential. This will be failing.`;
   }
   if (probe.key_accepted === true) {
     const where = probe.region ? ` Processing region: ${probe.region}.` : "";
-    return `Enhanced dictation is working via ${probe.host} using "${probe.model}".${where}`;
+    return `Working via ${probe.host} using "${probe.model}".${where}`;
   }
   return `${probe.host} returned HTTP ${probe.http_status}, which is neither an acceptance nor a rejection.`;
 }
@@ -279,7 +334,7 @@ serve(async (req) => {
     // Probe the configured endpoint, plus the global one for comparison. The
     // global probe is what distinguishes "key is region-scoped" from
     // "key is invalid" — the two look identical if you only test one.
-    const [configured, global, ai] = await Promise.all([
+    const [configured, global, ai, letters] = await Promise.all([
       probeStreaming(configuredHost, apiKey, wav),
       configuredHost === STREAMING_GLOBAL_HOST
         ? Promise.resolve(null)
@@ -288,6 +343,9 @@ serve(async (req) => {
       // transcription, so a diagnostic that only covered the streaming path
       // would report everything healthy while dictation was failing.
       probeAiProvider(wav),
+      // Transcription and letter generation are separate deployments. One
+      // working says nothing about the other.
+      probeLetterModel(),
     ]);
 
     // Correlate the two results into a single verdict (shared, unit-tested).
@@ -313,10 +371,12 @@ serve(async (req) => {
       `[diagnostics] verdict=${verdict} configured=${configuredHost}(${configured.http_status}) ` +
       `global=${global ? global.http_status : "skipped"}`,
     );
-    console.log(
-      `[diagnostics] dictation provider=${ai.provider} host=${ai.host} model=${ai.model} ` +
-      `status=${ai.http_status} accepted=${ai.key_accepted} region=${ai.region ?? "n/a"}`,
-    );
+    for (const [label, probe] of [["dictation", ai], ["letters", letters]] as const) {
+      console.log(
+        `[diagnostics] ${label} provider=${probe.provider} host=${probe.host} model=${probe.model} ` +
+        `status=${probe.http_status} accepted=${probe.key_accepted} region=${probe.region ?? "n/a"}`,
+      );
+    }
 
     return new Response(
       JSON.stringify({
@@ -330,6 +390,7 @@ serve(async (req) => {
         // Enhanced dictation, reported separately because it is a different
         // provider with its own credential, region and failure modes.
         enhanced_dictation: { ...ai, summary: summariseAiProbe(ai) },
+        letter_generation: { ...letters, summary: summariseAiProbe(letters) },
         checked_at: new Date().toISOString(),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
