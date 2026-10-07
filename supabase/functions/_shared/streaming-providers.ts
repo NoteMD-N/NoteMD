@@ -250,3 +250,98 @@ export function hasRequiredPrivacyControls(vendor: StreamingVendor, url: string)
   // data zone, which the host check above has already established.
   return true;
 }
+
+
+/**
+ * AssemblyAI's temporary token.
+ *
+ * Minted per session with a short redemption window: it must be used to open
+ * the socket within this many seconds, after which it is refused. It does not
+ * cap the resulting session's own length.
+ */
+export async function mintAssemblyAiToken(apiKey: string): Promise<string> {
+  const url = new URL("https://streaming.assemblyai.com/v3/token");
+  url.searchParams.set("expires_in_seconds", "120");
+
+  const resp = await fetch(url, {
+    headers: { Authorization: apiKey },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!resp.ok) {
+    // An error body can echo the key back; it never reaches the client.
+    console.error(`[streaming] AssemblyAI token request failed: HTTP ${resp.status}`);
+    throw new Error("The transcription provider rejected the API key");
+  }
+  const body = await resp.json();
+  const token = body?.token;
+  if (typeof token !== "string" || !token) {
+    throw new Error("The transcription provider returned no token");
+  }
+  return token;
+}
+
+/**
+ * Builds a complete, privacy-checked session descriptor for one vendor.
+ *
+ * Shared between the endpoint that issues sessions to the browser and the
+ * diagnostic that verifies them, so the thing being checked is the thing that
+ * runs — a diagnostic that builds its own session proves only that the
+ * diagnostic works.
+ */
+export async function buildStreamingSession(
+  vendor: StreamingVendor,
+  env: Env,
+): Promise<StreamingSession> {
+  const configuredHost = vendor === "deepgram"
+    ? env("DEEPGRAM_API_BASE")
+    : env("ASSEMBLYAI_API_BASE");
+  const host = resolveHost(vendor, configuredHost);
+
+  if (!isEuHost(vendor, host)) {
+    // Loud, because this would mean patient audio leaving EU infrastructure.
+    // For AssemblyAI the default host is the one that edge-routes outside the
+    // EEA, so this is not a hypothetical misconfiguration.
+    console.error(
+      `[streaming] NON-EU host configured for ${vendor}: ${host}. Refusing to issue a session.`,
+    );
+    throw new Error("Transcription service is misconfigured");
+  }
+
+  let session: StreamingSession;
+
+  if (vendor === "deepgram") {
+    const apiKey = (env("DEEPGRAM_API_KEY") || "").trim();
+    if (!apiKey) throw new Error("Transcription service is not configured");
+    session = {
+      vendor,
+      wsUrl: deepgramWsUrl(host, env),
+      credential: apiKey,
+      // Deepgram authenticates through the websocket subprotocol.
+      protocols: ["token", apiKey],
+      audioFormat: audioFormatFor(vendor),
+      model: modelFor(vendor, env),
+    };
+  } else {
+    const apiKey = (env("ASSEMBLYAI_API_KEY") || "").trim();
+    if (!apiKey) throw new Error("Transcription service is not configured");
+    const token = await mintAssemblyAiToken(apiKey);
+    session = {
+      vendor,
+      wsUrl: assemblyAiWsUrl(host, token, env),
+      credential: token,
+      audioFormat: audioFormatFor(vendor),
+      sampleRate: PCM_SAMPLE_RATE,
+      model: modelFor(vendor, env),
+    };
+  }
+
+  // Defensive: never issue a URL that has lost a privacy control on the way
+  // through. Being wrong here means patient audio retained or trained on,
+  // which cannot be undone once it has happened.
+  if (!hasRequiredPrivacyControls(vendor, session.wsUrl)) {
+    console.error(`[streaming] refusing to issue a ${vendor} URL missing privacy controls`);
+    throw new Error("Transcription service is misconfigured");
+  }
+
+  return session;
+}

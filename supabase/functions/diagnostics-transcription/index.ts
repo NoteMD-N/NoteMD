@@ -11,6 +11,11 @@ import {
   transcriptionsUrl,
 } from "../_shared/ai-provider.ts";
 import {
+  buildStreamingSession,
+  resolveVendors,
+  type StreamingVendor,
+} from "../_shared/streaming-providers.ts";
+import {
   buildBatchUrlForHost,
   hasPrivacyOptOut,
   resolveStreamingHost,
@@ -263,6 +268,104 @@ async function probeLetterModel(): Promise<AiProbeResult> {
   }
 }
 
+/**
+ * Opens a real session against the configured live-transcription vendor.
+ *
+ * The streaming path is the one a clinician depends on in the room, and it is
+ * the one this diagnostic did not cover: it probed the batch endpoint of one
+ * vendor while the live socket could be a different vendor entirely. A key
+ * that is wrong, revoked, or on a plan without the configured model fails
+ * only when someone presses record.
+ *
+ * So this does what the browser does — builds the session the same way, opens
+ * the socket, and reports whether the vendor accepted it. No audio is sent.
+ */
+async function probeStreamingVendor(
+  vendor: StreamingVendor,
+): Promise<{
+  vendor: string;
+  host: string;
+  model: string;
+  reachable: boolean;
+  accepted: boolean | null;
+  detail: string;
+  latency_ms: number;
+}> {
+  const started = Date.now();
+  const base = { vendor, host: "", model: "" };
+
+  let session;
+  try {
+    session = await buildStreamingSession(vendor, (n) => Deno.env.get(n));
+  } catch (e) {
+    // Configuration refused the session — a missing key, or a non-EU host.
+    return {
+      ...base,
+      reachable: false,
+      accepted: null,
+      detail: e instanceof Error ? e.message : "Could not build a session",
+      latency_ms: Date.now() - started,
+    };
+  }
+
+  const host = (() => {
+    try { return new URL(session.wsUrl).host; } catch { return "invalid"; }
+  })();
+
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (accepted: boolean | null, detail: string) => {
+      if (settled) return;
+      settled = true;
+      try { socket.close(); } catch { /* already closing */ }
+      resolve({
+        vendor,
+        host,
+        model: session.model,
+        reachable: true,
+        accepted,
+        detail,
+        latency_ms: Date.now() - started,
+      });
+    };
+
+    let socket: WebSocket;
+    try {
+      socket = session.protocols?.length
+        ? new WebSocket(session.wsUrl, session.protocols)
+        : new WebSocket(session.wsUrl);
+    } catch (e) {
+      return resolve({
+        ...base,
+        host,
+        model: session.model,
+        reachable: false,
+        accepted: null,
+        detail: e instanceof Error ? e.message : "Could not open a socket",
+        latency_ms: Date.now() - started,
+      });
+    }
+
+    const timer = setTimeout(() => finish(null, "No response within 8 seconds"), 8000);
+
+    socket.onopen = () => {
+      clearTimeout(timer);
+      finish(true, "Session opened and the credential was accepted.");
+    };
+    socket.onerror = () => {
+      clearTimeout(timer);
+      // A vendor refusing the handshake does not tell us why on the socket;
+      // the cause is almost always the credential or the configured model.
+      finish(false, "The vendor refused the session. Check the API key and that the configured model is available on the account.");
+    };
+    socket.onclose = (e) => {
+      clearTimeout(timer);
+      if (settled) return;
+      finish(e.code === 1000, `Closed before opening (code ${e.code}${e.reason ? `: ${e.reason}` : ""})`);
+    };
+  });
+}
+
 /** A sentence an operator can act on, for each AI-provider outcome. */
 function summariseAiProbe(probe: AiProbeResult): string {
   if (!probe.reachable && probe.http_status === null && probe.latency_ms === 0) {
@@ -334,7 +437,10 @@ serve(async (req) => {
     // Probe the configured endpoint, plus the global one for comparison. The
     // global probe is what distinguishes "key is region-scoped" from
     // "key is invalid" — the two look identical if you only test one.
-    const [configured, global, ai, letters] = await Promise.all([
+    // Which vendor actually serves live transcription, and does it answer?
+    const { primary: liveVendor, fallback: fallbackVendor } = resolveVendors((n) => Deno.env.get(n));
+
+    const [configured, global, ai, letters, live, liveFallback] = await Promise.all([
       probeStreaming(configuredHost, apiKey, wav),
       configuredHost === STREAMING_GLOBAL_HOST
         ? Promise.resolve(null)
@@ -346,6 +452,11 @@ serve(async (req) => {
       // Transcription and letter generation are separate deployments. One
       // working says nothing about the other.
       probeLetterModel(),
+      // The socket a clinician actually depends on. Opened for real, with no
+      // audio sent: a key that is wrong, revoked, or on a plan without the
+      // configured model otherwise fails only when someone presses record.
+      probeStreamingVendor(liveVendor),
+      fallbackVendor ? probeStreamingVendor(fallbackVendor) : Promise.resolve(null),
     ]);
 
     // Correlate the two results into a single verdict (shared, unit-tested).
@@ -371,6 +482,10 @@ serve(async (req) => {
       `[diagnostics] verdict=${verdict} configured=${configuredHost}(${configured.http_status}) ` +
       `global=${global ? global.http_status : "skipped"}`,
     );
+    console.log(
+      `[diagnostics] live vendor=${live.vendor} host=${live.host} model=${live.model} ` +
+      `accepted=${live.accepted} fallback=${liveFallback ? `${liveFallback.vendor}:${liveFallback.accepted}` : "none"}`,
+    );
     for (const [label, probe] of [["dictation", ai], ["letters", letters]] as const) {
       console.log(
         `[diagnostics] ${label} provider=${probe.provider} host=${probe.host} model=${probe.model} ` +
@@ -391,6 +506,8 @@ serve(async (req) => {
         // provider with its own credential, region and failure modes.
         enhanced_dictation: { ...ai, summary: summariseAiProbe(ai) },
         letter_generation: { ...letters, summary: summariseAiProbe(letters) },
+        live_transcription: live,
+        live_transcription_fallback: liveFallback,
         checked_at: new Date().toISOString(),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },

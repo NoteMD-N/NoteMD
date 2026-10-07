@@ -802,6 +802,8 @@ const Settings = () => {
                       individually so a healthy streaming check cannot be
                       mistaken for either of them working. */}
                   {[
+                    ["Live transcription engine", residencyCheck.live_transcription],
+                    ["Live transcription fallback", residencyCheck.live_transcription_fallback],
                     ["Enhanced dictation", residencyCheck.enhanced_dictation],
                     ["Letter generation", residencyCheck.letter_generation],
                   ].filter(([, probe]) => Boolean(probe)).map(([label, probe]: any) => (
@@ -811,18 +813,24 @@ const Settings = () => {
                     >
                       <p className="font-medium text-foreground">
                         {label}
-                        {probe.key_accepted === true
+                        {(probe.key_accepted ?? probe.accepted) === true
                           ? " — working"
-                          : probe.key_accepted === false
+                          : (probe.key_accepted ?? probe.accepted) === false
                           ? " — failing"
                           : " — unverified"}
                       </p>
-                      <p className="text-muted-foreground mt-1">{probe.summary}</p>
+                      <p className="text-muted-foreground mt-1">{probe.summary ?? probe.detail}</p>
                       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs text-muted-foreground">
                         <dt>Endpoint</dt>
-                        <dd className="font-mono">{probe.host}</dd>
+                        <dd className="font-mono">{probe.host || "—"}</dd>
                         <dt>Model</dt>
-                        <dd className="font-mono">{probe.model}</dd>
+                        <dd className="font-mono">{probe.model || "—"}</dd>
+                        {probe.vendor && (
+                          <>
+                            <dt>Provider</dt>
+                            <dd className="font-mono">{probe.vendor}</dd>
+                          </>
+                        )}
                         {probe.region && (
                           <>
                             <dt>Region</dt>
@@ -831,7 +839,7 @@ const Settings = () => {
                         )}
                         <dt>Response</dt>
                         <dd className="font-mono">
-                          HTTP {probe.http_status ?? "—"}
+                          {probe.http_status != null ? `HTTP ${probe.http_status}` : probe.reachable ? "socket" : "—"}
                           {probe.latency_ms != null && ` · ${probe.latency_ms}ms`}
                         </dd>
                       </dl>

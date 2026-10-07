@@ -214,24 +214,28 @@ describe("which bytes each vendor is sent", () => {
 
 describe("the session endpoint", () => {
   const fn = () => readFileSync(join(ROOT, "supabase/functions/streaming-session/index.ts"), "utf8");
+  // Session building is shared with the diagnostic that verifies it, so the
+  // thing checked is the thing that runs. A diagnostic that built its own
+  // session would prove only that the diagnostic works.
+  const shared = () => readFileSync(join(ROOT, "supabase/functions/_shared/streaming-providers.ts"), "utf8");
 
   it("never returns a long-lived key for the token-based vendor", () => {
     // The function this replaces returned the raw Deepgram API key to the
     // browser, where any signed-in user could read it from the network tab.
-    const src = fn();
+    const src = shared();
     expect(src).toMatch(/mintAssemblyAiToken/);
     expect(src).toMatch(/expires_in_seconds/);
   });
 
   it("checks the privacy controls before issuing a session", () => {
-    expect(fn()).toMatch(/hasRequiredPrivacyControls\(vendor, session\.wsUrl\)/);
+    expect(shared()).toMatch(/hasRequiredPrivacyControls\(vendor, session\.wsUrl\)/);
   });
 
   it("refuses a non-EU host rather than warning about it", () => {
     // The previous implementation logged a warning and issued the session
     // anyway, which meant a misconfiguration sent patient audio out of the
     // EEA with nothing to stop it.
-    const src = fn();
+    const src = shared();
     expect(src).toMatch(/if \(!isEuHost\(vendor, host\)\)/);
     expect(src).toMatch(/Refusing to issue a session/);
   });
@@ -247,5 +251,36 @@ describe("the session endpoint", () => {
 
   it("does not let a missing fallback break the primary path", () => {
     expect(fn()).toMatch(/fallback \$\{fallback\} unavailable/);
+  });
+});
+
+describe("the diagnostic covers the socket a clinician depends on", () => {
+  const diag = () => readFileSync(
+    join(ROOT, "supabase/functions/diagnostics-transcription/index.ts"), "utf8",
+  );
+
+  it("probes the vendor that actually serves live transcription", () => {
+    // It previously probed one vendor's batch endpoint while the live socket
+    // could be a different vendor entirely, so a green check said nothing
+    // about whether dictation worked.
+    const src = diag();
+    expect(src).toMatch(/resolveVendors\(/);
+    expect(src).toMatch(/probeStreamingVendor\(liveVendor\)/);
+  });
+
+  it("opens the session the browser would open, not one of its own", () => {
+    expect(diag()).toMatch(/buildStreamingSession\(vendor,/);
+  });
+
+  it("probes the fallback too, when one is configured", () => {
+    expect(diag()).toMatch(/fallbackVendor \? probeStreamingVendor\(fallbackVendor\)/);
+  });
+
+  it("sends no audio while checking", () => {
+    // A diagnostic that streamed real audio to a vendor would be sending
+    // something to transcribe for no clinical purpose.
+    const src = diag();
+    const probe = src.slice(src.indexOf("async function probeStreamingVendor"), src.indexOf("/** A sentence an operator"));
+    expect(probe).not.toMatch(/\.send\(/);
   });
 });

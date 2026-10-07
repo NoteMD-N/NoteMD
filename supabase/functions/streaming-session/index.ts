@@ -4,17 +4,9 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { redactError } from "../_shared/redact.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import {
-  assemblyAiWsUrl,
-  audioFormatFor,
-  deepgramWsUrl,
-  hasRequiredPrivacyControls,
-  isEuHost,
-  modelFor,
-  PCM_SAMPLE_RATE,
-  resolveHost,
+  buildStreamingSession,
   resolveVendors,
   type StreamingSession,
-  type StreamingVendor,
 } from "../_shared/streaming-providers.ts";
 
 /**
@@ -35,90 +27,6 @@ import {
  */
 
 const env = (name: string) => Deno.env.get(name);
-
-/**
- * AssemblyAI's temporary token.
- *
- * Minted per session with a short redemption window: it must be used to open
- * the socket within this many seconds, after which it is refused. It does not
- * cap the session's own length.
- */
-async function mintAssemblyAiToken(apiKey: string): Promise<string> {
-  const url = new URL("https://streaming.assemblyai.com/v3/token");
-  url.searchParams.set("expires_in_seconds", "120");
-
-  const resp = await fetch(url, {
-    headers: { Authorization: apiKey },
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!resp.ok) {
-    // The body can echo the key back in an error; it never reaches the client.
-    console.error(`[streaming-session] AssemblyAI token request failed: HTTP ${resp.status}`);
-    throw new Error("Transcription service is unavailable");
-  }
-  const body = await resp.json();
-  const token = body?.token;
-  if (typeof token !== "string" || !token) {
-    throw new Error("Transcription service is unavailable");
-  }
-  return token;
-}
-
-/** Builds a complete, privacy-checked session descriptor for one vendor. */
-async function buildSession(vendor: StreamingVendor): Promise<StreamingSession> {
-  const configuredHost = vendor === "deepgram"
-    ? env("DEEPGRAM_API_BASE")
-    : env("ASSEMBLYAI_API_BASE");
-  const host = resolveHost(vendor, configuredHost);
-
-  if (!isEuHost(vendor, host)) {
-    // Loud, because this means patient audio would leave EU infrastructure.
-    // For AssemblyAI the default host is the one that edge-routes to the US,
-    // so this is not a hypothetical misconfiguration.
-    console.error(
-      `[streaming-session] NON-EU host configured for ${vendor}: ${host}. Refusing to issue a session.`,
-    );
-    throw new Error("Transcription service is misconfigured");
-  }
-
-  let session: StreamingSession;
-
-  if (vendor === "deepgram") {
-    const apiKey = (env("DEEPGRAM_API_KEY") || "").trim();
-    if (!apiKey) throw new Error("Transcription service is not configured");
-    session = {
-      vendor,
-      wsUrl: deepgramWsUrl(host, env),
-      credential: apiKey,
-      // Deepgram authenticates through the websocket subprotocol.
-      protocols: ["token", apiKey],
-      audioFormat: audioFormatFor(vendor),
-      model: modelFor(vendor, env),
-    };
-  } else {
-    const apiKey = (env("ASSEMBLYAI_API_KEY") || "").trim();
-    if (!apiKey) throw new Error("Transcription service is not configured");
-    const token = await mintAssemblyAiToken(apiKey);
-    session = {
-      vendor,
-      wsUrl: assemblyAiWsUrl(host, token, env),
-      credential: token,
-      audioFormat: audioFormatFor(vendor),
-      sampleRate: PCM_SAMPLE_RATE,
-      model: modelFor(vendor, env),
-    };
-  }
-
-  // Defensive: never issue a URL that has lost a privacy control on the way
-  // through. The cost of being wrong here is patient audio retained or
-  // trained on, which cannot be undone once it has happened.
-  if (!hasRequiredPrivacyControls(vendor, session.wsUrl)) {
-    console.error(`[streaming-session] refusing to issue a ${vendor} URL missing privacy controls`);
-    throw new Error("Transcription service is misconfigured");
-  }
-
-  return session;
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -156,7 +64,7 @@ serve(async (req) => {
     }
 
     const { primary, fallback } = resolveVendors(env);
-    const session = await buildSession(primary);
+    const session = await buildStreamingSession(primary, env);
 
     // The fallback is built now rather than on failure: the browser must not
     // wait for a second round trip at the moment the primary has just refused
@@ -165,7 +73,7 @@ serve(async (req) => {
     let fallbackSession: StreamingSession | null = null;
     if (fallback) {
       try {
-        fallbackSession = await buildSession(fallback);
+        fallbackSession = await buildStreamingSession(fallback, env);
       } catch (e) {
         console.warn(`[streaming-session] fallback ${fallback} unavailable:`, redactError(e));
       }
