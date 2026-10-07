@@ -26,7 +26,8 @@ there is one source of truth).
     img-src 'self' data: blob: https://*.supabase.co;
     media-src 'self' blob: https://*.supabase.co;
     connect-src 'self' https://*.supabase.co wss://*.supabase.co
-                https://api.eu.deepgram.com wss://api.eu.deepgram.com;
+                https://api.eu.deepgram.com wss://api.eu.deepgram.com
+                wss://streaming.eu.assemblyai.com;
     worker-src 'self' blob:;
     object-src 'none';
     base-uri 'self';
@@ -44,8 +45,16 @@ inline style attributes — a materially weaker concern than script injection.
 ## Residency enforced in the browser
 
 The browser streams consultation audio directly to the transcription
-provider, so `connect-src` names the EU endpoint and deliberately omits the
-global one. Observed in the browser console:
+provider, so `connect-src` names each provider's EU endpoint and deliberately
+omits their default ones.
+
+This matters more for AssemblyAI than for Deepgram. AssemblyAI's default host,
+`streaming.assemblyai.com`, uses edge routing: it sends audio to whichever
+region is nearest, which includes the United States. Omitting it from
+`connect-src` therefore guards against the vendor's own documented default
+behaviour, not merely against a misconfiguration on our side.
+
+Observed in the browser console:
 
     Connecting to 'wss://api.deepgram.com/v1/listen' violates the following
     Content Security Policy directive: "connect-src 'self'
@@ -89,6 +98,8 @@ Loaded `https://notemd.co.uk` with the policy enforced:
 | Supabase API | reachable |
 | `wss://api.eu.deepgram.com` | permitted |
 | `wss://api.deepgram.com` | **blocked by `connect-src`** |
+| `wss://streaming.eu.assemblyai.com` | permitted |
+| `wss://streaming.assemblyai.com` | **blocked by `connect-src`** |
 
 The EU-residency property described above therefore holds in production,
 not only in the local preview.
@@ -102,3 +113,24 @@ flow — live dictation, audio playback on the letter view, and letter
 generation. These use only origins the policy permits and were exercised
 against the same policy locally, but a single end-to-end consultation in
 production is the check that would close this completely.
+
+
+## Applying a change to these headers
+
+Render reads `render.yaml` only on an initial Blueprint deploy. This service
+was created from the dashboard, so **changing `render.yaml` does not change
+what production serves** — the value must also be entered under
+*Static Site → Settings → Headers*.
+
+This was confirmed after the AssemblyAI host was added: the repository and the
+served policy disagreed until the dashboard was updated. Any change to the
+policy therefore needs both, and is worth verifying against the live site
+rather than the file:
+
+    curl -sI https://notemd.co.uk/ | tr ';' '\n' | grep -i connect-src
+
+**Consequence if this is missed:** the application deploys successfully and
+appears healthy, and live transcription then fails at the moment a clinician
+presses record, because the browser refuses the websocket. It does not fail
+at build time and it does not fail in local preview, where the policy is
+served from the file.
