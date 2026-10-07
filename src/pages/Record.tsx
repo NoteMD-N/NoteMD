@@ -11,6 +11,14 @@ import {
 } from "@/lib/audio-level";
 import { letterRoute } from "@/lib/letter-route";
 import { SegmentAssembler, appendSegments } from "@/lib/segment-assembly";
+import { PcmCapture } from "@/lib/streaming/pcm-capture";
+import {
+  closeMessage,
+  keepAliveMessage,
+  parseMessage,
+  usesRecorderOutput,
+  type StreamingSession,
+} from "@/lib/streaming/protocol";
 import { readPhi, writePhi, clearPhi, isSnapshotFresh, listPhiSlots, tabId } from "@/lib/local-phi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -232,10 +240,30 @@ const Record = () => {
   const elapsedBeforePauseRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const deepgramKeyRef = useRef<string | null>(null);
-  // Real-time endpoint, supplied by the token function so the region is
-  // server-controlled and changing it needs no frontend rebuild.
-  const streamEndpointRef = useRef<string | null>(null);
+  /**
+   * The live-transcription session, issued by the server.
+   *
+   * Carries the vendor, the complete endpoint URL, a short-lived credential
+   * and the audio format that vendor accepts. The browser never assembles any
+   * of it: the URL encodes the region and the privacy controls, and letting
+   * the client build one would mean letting it drop them.
+   */
+  const streamSessionRef = useRef<StreamingSession | null>(null);
+  /**
+   * A second vendor to try if the first will not open.
+   *
+   * Issued at the same time as the primary, because the moment it is needed is
+   * the moment the clinician is waiting to start — not a moment to spend on
+   * another round trip.
+   */
+  const streamFallbackRef = useRef<StreamingSession | null>(null);
+  /**
+   * Raw-PCM tap, for a vendor that will not take the recorder's output.
+   *
+   * Runs alongside the MediaRecorder rather than replacing it: the recording
+   * that is saved, segmented and re-transcribed is unchanged.
+   */
+  const pcmCaptureRef = useRef<PcmCapture | null>(null);
   const modeRef = useRef<RecordMode>(mode);
   // Mirror of useMedicalDictation for use inside stable event handlers whose
   // effects only run once (window online listener, etc).
@@ -633,25 +661,25 @@ const Record = () => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript, interimText]);
 
-  // Pre-warm Deepgram token on mount, unless we know the user will be using
-  // the accurate medical engine (which uses batch transcription after Stop
-  // and never opens a Deepgram stream).
+  // Pre-warm the streaming session on mount, unless the clinician will be
+  // using enhanced dictation (which transcribes after Stop and never opens a
+  // streaming socket).
   useEffect(() => {
     if (useMedicalDictation) {
-      // Signal "ready" so the Start button isn't disabled — we don't need Deepgram.
+      // Signal "ready" so the Start button isn't disabled — no socket needed.
       setDeepgramReady(true);
       return;
     }
     (async () => {
       try {
-        const { data, error } = await supabase.functions.invoke("deepgram-token");
-        if (!error && data?.key) {
-          deepgramKeyRef.current = data.key;
-          if (data.ws_url) streamEndpointRef.current = data.ws_url;
+        const { data, error } = await supabase.functions.invoke("streaming-session");
+        if (!error && data?.session) {
+          streamSessionRef.current = data.session as StreamingSession;
+          streamFallbackRef.current = (data.fallback as StreamingSession | null) ?? null;
           setDeepgramReady(true);
         }
       } catch (e) {
-        console.error("[transcription] token pre-warm failed", e);
+        console.error("[transcription] session pre-warm failed", e);
       }
     })();
   }, [useMedicalDictation]);
@@ -739,29 +767,35 @@ const Record = () => {
 
     ws.onmessage = (event) => {
       lastMessageAtRef.current = Date.now();
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === "Results" && msg.channel?.alternatives?.[0]) {
-          const alt = msg.channel.alternatives[0];
-          const text = alt.transcript;
-          if (!text) return;
 
-          if (recordingSessionRef.current !== session) return;
+      // Read against whichever vendor actually connected — which may be the
+      // fallback, not the one we first tried. The two wire formats differ
+      // enough that reading one as the other produces a plausible-looking
+      // transcript rather than an error.
+      const vendor = streamSessionRef.current?.vendor ?? "deepgram";
+      const result = parseMessage(vendor, event.data);
+      if (!result) return;
 
-          if (msg.is_final) {
-            // Append to whatever is currently on screen so user edits during recording are preserved
-            setTranscript((prev) => {
-              const next = prev + (prev ? " " : "") + text;
-              transcriptRef.current = next;
-              return next;
-            });
-            setInterimText("");
-          } else {
-            setInterimText(text);
-          }
-        }
-      } catch (e) {
-        console.error("[Transcription] Parse error:", e);
+      if (result.kind === "error") {
+        console.error(`[Transcription] ${vendor} reported:`, result.message);
+        return;
+      }
+
+      // This socket belongs to a consultation that has since ended. A vendor
+      // commonly emits one last final result as the stream closes, and the
+      // socket is not torn down until cleanup runs.
+      if (recordingSessionRef.current !== session) return;
+
+      if (result.kind === "final") {
+        // Append to whatever is on screen, so edits made during recording survive.
+        setTranscript((prev) => {
+          const next = prev + (prev ? " " : "") + result.text;
+          transcriptRef.current = next;
+          return next;
+        });
+        setInterimText("");
+      } else {
+        setInterimText(result.text);
       }
     };
 
@@ -779,48 +813,81 @@ const Record = () => {
     };
   }, []);
 
-  const openWebSocket = useCallback(async (opts?: { forceFreshToken?: boolean }): Promise<WebSocket> => {
-    // Deepgram short-lived tokens (default ~30s) can expire between the initial
-    // connection and any later reconnect. When reconnecting we always ask for a
-    // fresh one so a stale key doesn't silently fail the handshake.
-    let key = opts?.forceFreshToken ? null : deepgramKeyRef.current;
-    if (!key) {
-      const { data, error } = await supabase.functions.invoke("deepgram-token");
-      if (error || !data?.key) throw new Error(error?.message || "Could not start the transcription service");
-      key = data.key;
-      deepgramKeyRef.current = key;
-      if (data.ws_url) streamEndpointRef.current = data.ws_url;
+  /**
+   * Fetches a fresh pair of session descriptors.
+   *
+   * Credentials are short-lived by design, so a descriptor held since page
+   * load can be stale by the time a reconnect needs it.
+   */
+  const fetchStreamingSessions = useCallback(async (): Promise<StreamingSession> => {
+    const { data, error } = await supabase.functions.invoke("streaming-session");
+    if (error || !data?.session) {
+      throw new Error(error?.message || "Could not start the transcription service");
     }
+    streamSessionRef.current = data.session as StreamingSession;
+    streamFallbackRef.current = (data.fallback as StreamingSession | null) ?? null;
+    return streamSessionRef.current;
+  }, []);
 
-    // The complete URL — region, recognition options and the mandatory
-    // no-retention opt-out — is built server-side and returned by the token
-    // function. The browser deliberately does not assemble it, so it cannot
-    // omit the opt-out or point at a non-EU region.
-    const endpoint = streamEndpointRef.current;
-    if (!endpoint) {
-      throw new Error("Could not start the transcription service");
-    }
-    const ws = new WebSocket(endpoint, ["token", key!]);
+  /** Opens one socket against one vendor. Resolves only once it is connected. */
+  const connect = useCallback((session: StreamingSession): Promise<WebSocket> => {
+    // The complete URL — region, recognition options and the vendor's privacy
+    // controls — is built server-side. The browser deliberately does not
+    // assemble it, so it cannot drop a control or reach a non-EU region.
+    const ws = session.protocols?.length
+      ? new WebSocket(session.wsUrl, session.protocols)
+      : new WebSocket(session.wsUrl);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        try { ws.close(); } catch { /* already closing */ }
         reject(new Error("Transcription service timed out. Check your connection and try again."));
       }, 10000);
 
       ws.onopen = () => {
         clearTimeout(timeout);
-        console.log("[Transcription] Connected");
+        console.log(`[Transcription] Connected via ${session.vendor} (${session.model})`);
         lastMessageAtRef.current = Date.now();
         resolve(ws);
       };
 
       ws.onerror = (e) => {
         clearTimeout(timeout);
-        console.error("[Transcription] Connection error:", e);
+        console.error(`[Transcription] ${session.vendor} connection error:`, e);
         reject(new Error("Could not connect to the transcription service"));
       };
     });
   }, []);
+
+  const openWebSocket = useCallback(async (opts?: { forceFreshToken?: boolean }): Promise<WebSocket> => {
+    // Streaming credentials are short-lived and can expire between page load
+    // and a later reconnect, so a reconnect always asks for a fresh pair
+    // rather than failing the handshake on a stale one.
+    let session = opts?.forceFreshToken ? null : streamSessionRef.current;
+    if (!session) session = await fetchStreamingSessions();
+
+    try {
+      return await connect(session);
+    } catch (primaryError) {
+      // Failover at the start of a consultation only. The clinician has not
+      // started speaking, so switching vendors here costs nothing and is
+      // invisible. Mid-stream switching is deliberately not attempted: it
+      // would leave a seam where a word can duplicate or drop, and the
+      // reconnect path already handles a mid-session drop by re-opening the
+      // same vendor.
+      const fallback = streamFallbackRef.current;
+      if (!fallback || fallback.vendor === session.vendor) throw primaryError;
+
+      console.warn(
+        `[Transcription] ${session.vendor} would not open; falling back to ${fallback.vendor}.`,
+      );
+      const ws = await connect(fallback);
+      // The fallback is now this session's vendor: message parsing and audio
+      // format must follow it, not the vendor that failed.
+      streamSessionRef.current = fallback;
+      return ws;
+    }
+  }, [connect, fetchStreamingSessions]);
 
   // On reconnect we DELIBERATELY do not replay buffered chunks. They are
   // mid-stream webm data captured after the recorder had already emitted its
@@ -867,6 +934,10 @@ const Record = () => {
       chunksRef.current.push(e.data);
       if (isPausedRef.current) return;
       if (recorder.state !== "recording") return;
+      // A raw-PCM vendor is fed by the microphone tap, which survives the
+      // recorder restart; the recorder's WebM would be undecodable to it.
+      const liveSession = streamSessionRef.current;
+      if (liveSession && !usesRecorderOutput(liveSession)) return;
       const currentWs = wsRef.current;
       if (currentWs && currentWs.readyState === WebSocket.OPEN) {
         try {
@@ -991,6 +1062,38 @@ const Record = () => {
       levelMonitor.start(stream);
       levelMonitorRef.current = levelMonitor;
       setMicLevel("ok");
+
+      // Vendors that will not decode the recorder's WebM are fed raw PCM
+      // tapped from the same microphone stream. The MediaRecorder carries on
+      // regardless: the audio that is stored, segmented and re-transcribed is
+      // unchanged by which vendor is transcribing it live.
+      const liveSession = streamSessionRef.current;
+      if (ws && liveSession && !usesRecorderOutput(liveSession)) {
+        const capture = new PcmCapture();
+        pcmCaptureRef.current = capture;
+        const started = await capture.start(
+          stream,
+          (frame) => {
+            const socket = wsRef.current;
+            if (socket && socket.readyState === WebSocket.OPEN) {
+              try {
+                socket.send(frame);
+              } catch (err) {
+                console.warn("[Transcription] PCM send failed:", err);
+              }
+            }
+          },
+          liveSession.sampleRate,
+        );
+        if (!started) {
+          // The live transcript will not appear, but the consultation still
+          // records and is still transcribed after Stop. Say so rather than
+          // leaving the clinician watching an empty box.
+          toast.warning(
+            "Live transcript unavailable on this device — your recording is still being captured.",
+          );
+        }
+      }
       chunksRef.current = [];
       if (ws) attachWebSocketHandlers(ws);
 
@@ -1012,6 +1115,12 @@ const Record = () => {
 
         // Also skip when MediaRecorder isn't in "recording" state (e.g. while stopping)
         if (recorder.state !== "recording") return;
+
+        // A vendor that takes raw PCM is already being fed by the microphone
+        // tap. Sending the recorder's WebM as well would put undecodable bytes
+        // on the socket.
+        const liveSession = streamSessionRef.current;
+        if (liveSession && !usesRecorderOutput(liveSession)) return;
 
         const currentWs = wsRef.current;
         if (currentWs && currentWs.readyState === WebSocket.OPEN) {
@@ -1114,7 +1223,10 @@ const Record = () => {
         const currentWs = wsRef.current;
         if (currentWs && currentWs.readyState === WebSocket.OPEN) {
           try {
-            currentWs.send(JSON.stringify({ type: "KeepAlive" }));
+            const ping = keepAliveMessage(streamSessionRef.current?.vendor ?? "deepgram");
+            // Not every vendor defines one; sending an unrecognised frame
+            // risks a protocol error, which is worse than the idleness.
+            if (ping) currentWs.send(ping);
           } catch {
             /* ignore */
           }
@@ -1204,6 +1316,11 @@ const Record = () => {
     levelMonitorRef.current?.stop();
     levelMonitorRef.current = null;
 
+    // Closes its own AudioContext. Left running it would hold the microphone
+    // open after the consultation has ended.
+    void pcmCaptureRef.current?.stop();
+    pcmCaptureRef.current = null;
+
     if (timerRef.current) clearInterval(timerRef.current);
     if (keepAliveRef.current) clearInterval(keepAliveRef.current);
     if (healthCheckRef.current) clearInterval(healthCheckRef.current);
@@ -1243,7 +1360,7 @@ const Record = () => {
           try { ws.send(chunk); } catch { /* ignore */ }
         }
         pendingChunksRef.current = [];
-        ws.send(JSON.stringify({ type: "CloseStream" }));
+        ws.send(closeMessage(streamSessionRef.current?.vendor ?? "deepgram"));
       } catch {
         /* ignore */
       }

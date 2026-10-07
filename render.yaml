@@ -44,11 +44,22 @@ services:
       # React's style prop, which produces inline style attributes. That is a
       # far weaker concern than script injection.
       #
-      # connect-src names api.eu.deepgram.com and deliberately does NOT name
-      # api.deepgram.com. The browser streams consultation audio straight to
-      # Deepgram, so this makes the EU residency commitment enforceable in the
-      # browser: if anything ever pointed the stream at the global endpoint,
-      # the connection would be refused rather than silently leaving the EEA.
+      # connect-src names each transcription vendor's EU host and deliberately
+      # does NOT name their default ones. The browser streams consultation
+      # audio straight to the vendor, so this makes the EU residency
+      # commitment enforceable in the browser: if anything ever pointed the
+      # stream at a global endpoint, the connection would be refused rather
+      # than silently leaving the EEA.
+      #
+      # This matters more for AssemblyAI than for Deepgram. AssemblyAI's
+      # default host (streaming.assemblyai.com) edge-routes to whichever
+      # region is nearest, which includes the United States — so the omission
+      # below is not guarding against a typo, it is guarding against the
+      # vendor's own default behaviour.
+      #
+      # Only the websocket hosts appear here. Temporary tokens are minted
+      # server-side by the streaming-session function, so the browser never
+      # calls a vendor's REST API.
       # ---------------------------------------------------------------------
       - path: /*
         name: Content-Security-Policy
@@ -59,7 +70,9 @@ services:
           font-src 'self' data: https://fonts.gstatic.com;
           img-src 'self' data: blob: https://*.supabase.co;
           media-src 'self' blob: https://*.supabase.co;
-          connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.eu.deepgram.com wss://api.eu.deepgram.com;
+          connect-src 'self' https://*.supabase.co wss://*.supabase.co
+          https://api.eu.deepgram.com wss://api.eu.deepgram.com
+          wss://streaming.eu.assemblyai.com;
           worker-src 'self' blob:;
           object-src 'none';
           base-uri 'self';

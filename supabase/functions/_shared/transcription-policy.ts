@@ -17,6 +17,8 @@
  *     and quietly substitute different text.
  */
 
+import { DEFAULT_DEEPGRAM_MODEL } from "./streaming-providers.ts";
+
 export type Provider = "openai" | "medasr" | "deepgram";
 
 /** Values the client may send for the requested engine. */
@@ -253,7 +255,11 @@ export const REQUIRED_PRIVACY_PARAMS: Record<string, string> = {
 };
 
 const BASE_RECOGNITION_PARAMS: Record<string, string> = {
-  model: "nova-2-medical",
+  // One source of truth with the live streaming path. Two modules each
+  // naming a model is how the batch fallback ends up transcribing with a
+  // different engine from the live stream, which is invisible until someone
+  // compares two transcripts of the same consultation.
+  model: DEFAULT_DEEPGRAM_MODEL,
   language: "en-GB",
   smart_format: "true",
   punctuate: "true",
