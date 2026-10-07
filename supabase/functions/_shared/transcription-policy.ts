@@ -17,7 +17,7 @@
  *     and quietly substitute different text.
  */
 
-import { DEFAULT_DEEPGRAM_MODEL } from "./streaming-providers.ts";
+import { configuredDeepgramModel } from "./streaming-providers.ts";
 
 export type Provider = "openai" | "medasr" | "deepgram";
 
@@ -254,21 +254,24 @@ export const REQUIRED_PRIVACY_PARAMS: Record<string, string> = {
   mip_opt_out: "true",
 };
 
-const BASE_RECOGNITION_PARAMS: Record<string, string> = {
-  // One source of truth with the live streaming path. Two modules each
-  // naming a model is how the batch fallback ends up transcribing with a
-  // different engine from the live stream, which is invisible until someone
-  // compares two transcripts of the same consultation.
-  model: DEFAULT_DEEPGRAM_MODEL,
+/**
+ * Resolved per call rather than fixed at module load, so one setting governs
+ * the live socket and the batch fallback alike. Two modules each naming a
+ * model is how the fallback ends up transcribing with a different engine from
+ * the live stream, which is invisible until someone compares two transcripts
+ * of the same consultation.
+ */
+const baseRecognitionParams = (): Record<string, string> => ({
+  model: configuredDeepgramModel(),
   language: "en-GB",
   smart_format: "true",
   punctuate: "true",
-};
+});
 
 /** Query parameters for the real-time socket. */
 export function streamingParams(extra: Record<string, string> = {}): URLSearchParams {
   return new URLSearchParams({
-    ...BASE_RECOGNITION_PARAMS,
+    ...baseRecognitionParams(),
     interim_results: "true",
     utterance_end_ms: "1000",
     vad_events: "true",
@@ -280,7 +283,7 @@ export function streamingParams(extra: Record<string, string> = {}): URLSearchPa
 /** Query parameters for the pre-recorded/batch endpoint. */
 export function batchParams(extra: Record<string, string> = {}): URLSearchParams {
   return new URLSearchParams({
-    ...BASE_RECOGNITION_PARAMS,
+    ...baseRecognitionParams(),
     paragraphs: "true",
     ...extra,
     ...REQUIRED_PRIVACY_PARAMS, // last, so it cannot be overridden by a caller

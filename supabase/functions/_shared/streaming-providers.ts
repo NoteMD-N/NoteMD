@@ -93,6 +93,23 @@ export const DEEPGRAM_PRIVACY_PARAMS: Record<string, string> = {
  * deployment on our side and no way to notice.
  */
 export const DEFAULT_DEEPGRAM_MODEL = "nova-3-medical";
+
+/**
+ * The Deepgram model actually in use, from configuration.
+ *
+ * Read through one function so the live socket and the batch fallback cannot
+ * end up on different models — two transcripts of the same consultation
+ * produced by different engines is the kind of difference nobody notices until
+ * they are compared side by side.
+ *
+ * Falls back to the default where no environment is available, which is what
+ * lets the shared policy module be imported by the frontend test suite.
+ */
+export function configuredDeepgramModel(env?: Env): string {
+  const read = env ?? ((name: string) =>
+    (globalThis as { Deno?: { env?: { get(n: string): string | undefined } } }).Deno?.env?.get(name));
+  return (read("DEEPGRAM_MODEL") || DEFAULT_DEEPGRAM_MODEL).trim();
+}
 export const DEFAULT_ASSEMBLYAI_MODEL = "universal-3-5-pro";
 
 /** Sample rate for the raw-PCM vendors. 16 kHz is ample for speech. */
@@ -159,7 +176,7 @@ export function resolveHost(vendor: StreamingVendor, configured: string | null |
  */
 export function deepgramWsUrl(host: string, env: Env): string {
   const params = new URLSearchParams({
-    model: (env("DEEPGRAM_MODEL") || DEFAULT_DEEPGRAM_MODEL).trim(),
+    model: configuredDeepgramModel(env),
     language: (env("DEEPGRAM_LANGUAGE") || "en-GB").trim(),
     smart_format: "true",
     punctuate: "true",
@@ -200,7 +217,7 @@ export function assemblyAiWsUrl(host: string, token: string, env: Env): string {
 /** The model a vendor will use, for display and for the audit trail. */
 export function modelFor(vendor: StreamingVendor, env: Env): string {
   return vendor === "deepgram"
-    ? (env("DEEPGRAM_MODEL") || DEFAULT_DEEPGRAM_MODEL).trim()
+    ? configuredDeepgramModel(env)
     : (env("ASSEMBLYAI_SPEECH_MODEL") || DEFAULT_ASSEMBLYAI_MODEL).trim();
 }
 
