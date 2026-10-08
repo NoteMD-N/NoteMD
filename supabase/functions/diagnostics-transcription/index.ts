@@ -165,9 +165,14 @@ type AiProbeResult = {
  * and reads the processing region back out of the response headers, so
  * residency is evidenced by the provider rather than asserted by us.
  */
-async function probeAiProvider(wav: Uint8Array): Promise<AiProbeResult> {
+async function probeAiProvider(wav: Uint8Array, modelOverride?: string): Promise<AiProbeResult> {
   const config = resolveAiConfig((name) => Deno.env.get(name));
-  const url = transcriptionsUrl(config, config.transcribeModel);
+  // An override lets a deployment be checked for readiness *before* anything
+  // is pointed at it. Switching the transcription deployment blind is not a
+  // reversible mistake in the moment: on Azure a name that does not exist is
+  // a 404 on every dictation, discovered by a clinician mid-consultation.
+  const model = (modelOverride || config.transcribeModel).trim();
+  const url = transcriptionsUrl(config, model);
   const host = (() => {
     try { return new URL(url).host; } catch { return "invalid"; }
   })();
@@ -175,7 +180,7 @@ async function probeAiProvider(wav: Uint8Array): Promise<AiProbeResult> {
   const base: Omit<AiProbeResult, "reachable" | "http_status" | "key_accepted" | "region" | "latency_ms"> = {
     provider: config.provider,
     host,
-    model: config.transcribeModel,
+    model,
   };
 
   const started = Date.now();
@@ -186,7 +191,7 @@ async function probeAiProvider(wav: Uint8Array): Promise<AiProbeResult> {
   try {
     const form = new FormData();
     form.append("file", new Blob([wav], { type: "audio/wav" }), "probe.wav");
-    form.append("model", config.transcribeModel);
+    form.append("model", model);
     form.append("response_format", "text");
 
     const resp = await fetch(url, {
@@ -459,6 +464,17 @@ serve(async (req) => {
       fallbackVendor ? probeStreamingVendor(fallbackVendor) : Promise.resolve(null),
     ]);
 
+    // Readiness check for the successor transcription deployment, reported
+    // without anything being pointed at it. gpt-4o-transcribe is retired by
+    // Microsoft on 31 December 2026, mid-pilot, so whether its replacement
+    // exists on the resource is worth knowing before that date rather than
+    // after it.
+    const SUCCESSOR_DEPLOYMENT = "gpt-transcribe";
+    const activeDictationModel = ai.model;
+    const successor = activeDictationModel === SUCCESSOR_DEPLOYMENT
+      ? null
+      : await probeAiProvider(wav, SUCCESSOR_DEPLOYMENT);
+
     // Correlate the two results into a single verdict (shared, unit-tested).
     const euConfigured = isEuResidentStreamingHost(configuredBase);
     const verdict = resolveResidencyVerdict({
@@ -508,6 +524,16 @@ serve(async (req) => {
         letter_generation: { ...letters, summary: summariseAiProbe(letters) },
         live_transcription: live,
         live_transcription_fallback: liveFallback,
+        dictation_successor: successor
+          ? {
+              ...successor,
+              summary: successor.key_accepted === true
+                ? `"${successor.model}" is deployed and ready. Enhanced dictation can be switched to it.`
+                : successor.http_status === 404
+                ? `"${successor.model}" is not deployed on this resource yet.`
+                : summariseAiProbe(successor),
+            }
+          : null,
         checked_at: new Date().toISOString(),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },

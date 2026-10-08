@@ -64,24 +64,47 @@ serve(async (req) => {
     }
 
     const { primary, fallback } = resolveVendors(env);
-    const session = await buildStreamingSession(primary, env);
 
-    // The fallback is built now rather than on failure: the browser must not
+    // Two different failures, both of which the fallback must cover.
+    //
+    // The socket may refuse to open, which the browser handles with the
+    // fallback descriptor below. But the session may also fail to *build* —
+    // the token endpoint down, the key revoked — and that happens here. The
+    // first version of this threw, returned 500, and never reached a
+    // configured, healthy fallback: exactly the outage the fallback exists to
+    // prevent.
+    let session: StreamingSession;
+    let demoted: string | null = null;
+    try {
+      session = await buildStreamingSession(primary, env);
+    } catch (primaryError) {
+      if (!fallback) throw primaryError;
+      console.error(
+        `[streaming-session] could not build a ${primary} session; using ${fallback}:`,
+        redactError(primaryError),
+      );
+      session = await buildStreamingSession(fallback, env);
+      demoted = primary;
+    }
+
+    // The standby is built now rather than on failure: the browser must not
     // wait for a second round trip at the moment the primary has just refused
-    // to open, mid-consultation. A fallback that cannot be built is simply
-    // absent — it must never take down the primary path.
+    // to open, with a clinician waiting to start. A standby that cannot be
+    // built is simply absent — it must never take down the working path.
     let fallbackSession: StreamingSession | null = null;
-    if (fallback) {
+    const standby = fallback && fallback !== session.vendor ? fallback : null;
+    if (standby) {
       try {
-        fallbackSession = await buildStreamingSession(fallback, env);
+        fallbackSession = await buildStreamingSession(standby, env);
       } catch (e) {
-        console.warn(`[streaming-session] fallback ${fallback} unavailable:`, redactError(e));
+        console.warn(`[streaming-session] standby ${standby} unavailable:`, redactError(e));
       }
     }
 
     console.log(
       `[streaming-session] vendor=${session.vendor} model=${session.model} ` +
-      `format=${session.audioFormat} fallback=${fallbackSession?.vendor ?? "none"}`,
+      `format=${session.audioFormat} fallback=${fallbackSession?.vendor ?? "none"}` +
+      (demoted ? ` (${demoted} unavailable)` : ""),
     );
 
     return new Response(

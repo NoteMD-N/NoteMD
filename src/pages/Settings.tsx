@@ -805,6 +805,7 @@ const Settings = () => {
                     ["Live transcription engine", residencyCheck.live_transcription],
                     ["Live transcription fallback", residencyCheck.live_transcription_fallback],
                     ["Enhanced dictation", residencyCheck.enhanced_dictation],
+                    ["Enhanced dictation — successor model", residencyCheck.dictation_successor],
                     ["Letter generation", residencyCheck.letter_generation],
                   ].filter(([, probe]) => Boolean(probe)).map(([label, probe]: any) => (
                     <div

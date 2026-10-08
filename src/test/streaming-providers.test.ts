@@ -250,7 +250,9 @@ describe("the session endpoint", () => {
   });
 
   it("does not let a missing fallback break the primary path", () => {
-    expect(fn()).toMatch(/fallback \$\{fallback\} unavailable/);
+    // Renamed to "standby": after a demotion the fallback may be the session
+    // that is serving, so the spare needs its own word.
+    expect(fn()).toMatch(/standby \$\{standby\} unavailable/);
   });
 });
 
@@ -282,5 +284,31 @@ describe("the diagnostic covers the socket a clinician depends on", () => {
     const src = diag();
     const probe = src.slice(src.indexOf("async function probeStreamingVendor"), src.indexOf("/** A sentence an operator"));
     expect(probe).not.toMatch(/\.send\(/);
+  });
+});
+
+describe("the fallback covers both ways a primary can fail", () => {
+  const fn = () => readFileSync(join(ROOT, "supabase/functions/streaming-session/index.ts"), "utf8");
+
+  it("falls back when the primary session cannot even be built", () => {
+    // The socket refusing to open is handled in the browser. But the session
+    // can also fail to build — token endpoint down, key revoked — and the
+    // first version of this threw a 500 without ever reaching a configured,
+    // healthy fallback: the exact outage the fallback exists to prevent.
+    const src = fn();
+    expect(src).toMatch(/catch \(primaryError\)/);
+    expect(src).toMatch(/session = await buildStreamingSession\(fallback, env\)/);
+  });
+
+  it("still fails when there is no fallback to use", () => {
+    // Silently returning nothing would leave the browser with no session and
+    // no reason why.
+    expect(fn()).toMatch(/if \(!fallback\) throw primaryError/);
+  });
+
+  it("does not offer a standby that is already serving", () => {
+    // After a demotion the fallback IS the session; offering it again would
+    // tell the browser to retry the vendor it is already using.
+    expect(fn()).toMatch(/fallback !== session\.vendor \? fallback : null/);
   });
 });
