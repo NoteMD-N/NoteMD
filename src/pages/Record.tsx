@@ -11,6 +11,7 @@ import {
 } from "@/lib/audio-level";
 import { letterRoute } from "@/lib/letter-route";
 import { SegmentAssembler, appendSegments } from "@/lib/segment-assembly";
+import ConsultationContext from "@/components/ConsultationContext";
 import { PcmCapture } from "@/lib/streaming/pcm-capture";
 import { PCM_BYTES_PER_SECOND as PCM_BACKLOG_RATE_BYTES } from "@/lib/streaming/pcm";
 import {
@@ -332,6 +333,13 @@ const Record = () => {
    */
   const levelMonitorRef = useRef<AudioLevelMonitor | null>(null);
   const [micLevel, setMicLevel] = useState<MicLevelState>("ok");
+  /**
+   * The context the clinician assembled before this consultation.
+   *
+   * Linked to the recording when one is created, so the two are deleted
+   * together. Deliberately not passed to letter generation.
+   */
+  const contextIdRef = useRef<string | null>(null);
   // WebSocket reconnection state
   const pendingChunksRef = useRef<Blob[]>([]); // chunks captured during disconnect
   const reconnectAttemptRef = useRef(0);
@@ -503,6 +511,18 @@ const Record = () => {
           .single();
         if (recErr || !rec) return;
         autoDraftRecordingIdRef.current = rec.id;
+
+        // Bind any context the clinician assembled to this consultation, so
+        // deleting the recording takes the uploaded documents with it. A
+        // previous clinic letter outliving the consultation it was gathered
+        // for is exactly what the retention policy exists to prevent.
+        if (contextIdRef.current) {
+          const { error: linkErr } = await supabase
+            .from("consultation_contexts")
+            .update({ recording_id: rec.id })
+            .eq("id", contextIdRef.current);
+          if (linkErr) console.warn("[context] Could not link to recording:", linkErr.message);
+        }
 
         const { data: letterRow, error: letterErr } = await supabase
           .from("letters")
@@ -2461,6 +2481,15 @@ const Record = () => {
                 management plan. The AI uses this summary as a backbone for the letter.
               </div>
             </div>
+          )}
+
+          {/* Preparation, so it appears only before recording starts. Mid
+              consultation the clinician's attention belongs on the patient,
+              and afterwards the context has already served its purpose. */}
+          {stage === "record" && !isRecording && !hasRecording && !processing && (
+            <ConsultationContext
+              onContextIdChange={(id) => { contextIdRef.current = id; }}
+            />
           )}
 
           {stage === "record" && (

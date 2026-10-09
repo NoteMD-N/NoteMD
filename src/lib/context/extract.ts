@@ -21,11 +21,31 @@
  * with a text layer never has to leave the device as an image at all.
  */
 
-import * as pdfjs from "pdfjs-dist";
+type PdfJs = typeof import("pdfjs-dist");
+type PdfDocument = import("pdfjs-dist").PDFDocumentProxy;
 
-// Served from our own origin: the Content Security Policy allows scripts from
-// 'self' only, and a CDN-hosted worker would need script-src widened.
-pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+/**
+ * pdf.js is loaded on first use, not at startup.
+ *
+ * It is around 375KB. Most consultations never upload a document, and making
+ * every clinician download a PDF engine before they can press record is a
+ * poor trade for a feature used occasionally. The dynamic import puts it in
+ * its own chunk, fetched the first time someone actually adds a file.
+ */
+let pdfjsPromise: Promise<PdfJs> | null = null;
+
+function loadPdfJs(): Promise<PdfJs> {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import("pdfjs-dist").then((mod) => {
+      // Served from our own origin: the Content Security Policy allows
+      // scripts from 'self' only, and a CDN-hosted worker would need
+      // script-src widened.
+      mod.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      return mod;
+    });
+  }
+  return pdfjsPromise;
+}
 
 export type ExtractionMethod = "text-layer" | "ocr" | "none";
 
@@ -65,8 +85,9 @@ const OCR_SCALE = 2.0;
 export async function extractPdf(file: File | Blob): Promise<ExtractedDocument> {
   const empty: ExtractedDocument = { method: "none", text: "", pageCount: 0, pageImages: [] };
 
-  let doc: pdfjs.PDFDocumentProxy;
+  let doc: PdfDocument;
   try {
+    const pdfjs = await loadPdfJs();
     const data = new Uint8Array(await file.arrayBuffer());
     doc = await pdfjs.getDocument({ data, isEvalSupported: false }).promise;
   } catch (err) {
@@ -117,7 +138,7 @@ export async function extractPdf(file: File | Blob): Promise<ExtractedDocument> 
 
 /** Renders one page to a JPEG for the vision model. */
 async function renderPageToImage(
-  doc: pdfjs.PDFDocumentProxy,
+  doc: PdfDocument,
   pageNumber: number,
 ): Promise<Blob | null> {
   const page = await doc.getPage(pageNumber);

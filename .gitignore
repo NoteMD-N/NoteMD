@@ -29,3 +29,6 @@ supabase/.branches/
 
 # Local preview/launch config
 .claude/
+
+# pdf.js worker, copied from node_modules at build time
+public/pdf.worker.min.mjs

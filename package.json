@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "build:staging": "vite build --mode staging",
     "test:idor": "vitest run src/test/idor.integration.test.ts",
-    "audit:prod": "npm audit --omit=dev --audit-level=moderate"
+    "audit:prod": "npm audit --omit=dev --audit-level=moderate",
+    "prebuild": "cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs",
+    "predev": "cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
