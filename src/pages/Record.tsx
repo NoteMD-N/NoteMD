@@ -12,6 +12,7 @@ import {
 import { letterRoute } from "@/lib/letter-route";
 import { SegmentAssembler, appendSegments } from "@/lib/segment-assembly";
 import { PcmCapture } from "@/lib/streaming/pcm-capture";
+import { PCM_BYTES_PER_SECOND as PCM_BACKLOG_RATE_BYTES } from "@/lib/streaming/pcm";
 import {
   closeMessage,
   keepAliveMessage,
@@ -264,6 +265,16 @@ const Record = () => {
    * that is saved, segmented and re-transcribed is unchanged.
    */
   const pcmCaptureRef = useRef<PcmCapture | null>(null);
+  /**
+   * PCM captured while the socket was down, replayed when it comes back.
+   *
+   * Raw PCM has no container state, so unlike the recorder's WebM it *can* be
+   * replayed after a dropout — the words spoken during a blip are recoverable
+   * rather than lost. Bounded, because a long outage must not grow the heap
+   * during a consultation.
+   */
+  const pcmBacklogRef = useRef<ArrayBuffer[]>([]);
+  const pcmBacklogBytesRef = useRef(0);
   const modeRef = useRef<RecordMode>(mode);
   // Mirror of useMedicalDictation for use inside stable event handlers whose
   // effects only run once (window online listener, etc).
@@ -976,11 +987,36 @@ const Record = () => {
         wsRef.current = ws;
         attachWebSocketHandlers(ws);
 
-        // Discard any mid-stream chunks captured while offline — they can't be
-        // decoded standalone. Then restart the MediaRecorder so the new socket
-        // gets a fresh webm stream (with header) it can actually parse.
-        dropPendingChunks();
-        restartMediaRecorderForReconnect();
+        const liveSession = streamSessionRef.current;
+        if (!liveSession || usesRecorderOutput(liveSession)) {
+          // Discard any mid-stream chunks captured while offline — they can't
+          // be decoded standalone. Then restart the MediaRecorder so the new
+          // socket gets a fresh webm stream (with header) it can parse.
+          dropPendingChunks();
+          restartMediaRecorderForReconnect();
+        } else {
+          // A raw-PCM vendor is not fed by the recorder, so restarting it
+          // would serve no purpose and would interrupt the recording that is
+          // saved and re-transcribed — injecting a second container header
+          // mid-file for nothing.
+          //
+          // And because PCM carries no container state, the audio captured
+          // during the dropout can simply be replayed.
+          const backlog = pcmBacklogRef.current;
+          pcmBacklogRef.current = [];
+          pcmBacklogBytesRef.current = 0;
+          let replayed = 0;
+          for (const frame of backlog) {
+            if (ws.readyState !== WebSocket.OPEN) break;
+            try { ws.send(frame); replayed += frame.byteLength; } catch { break; }
+          }
+          if (replayed > 0) {
+            console.log(
+              `[Transcription] Replayed ${(replayed / PCM_BACKLOG_RATE_BYTES).toFixed(1)}s ` +
+                "of audio captured during the dropout.",
+            );
+          }
+        }
 
         reconnectAttemptRef.current = 0;
         setStreamHealth("connected");
@@ -1023,6 +1059,8 @@ const Record = () => {
       isPausedRef.current = false;
       hadDisconnectRef.current = false;
       segmentAssemblerRef.current = new SegmentAssembler();
+      pcmBacklogRef.current = [];
+      pcmBacklogBytesRef.current = 0;
       transcriptEditedRef.current = false;
       setSegmentGaps(0);
       setBufferedSeconds(0);
@@ -1078,10 +1116,23 @@ const Record = () => {
             if (socket && socket.readyState === WebSocket.OPEN) {
               try {
                 socket.send(frame);
+                return;
               } catch (err) {
-                console.warn("[Transcription] PCM send failed:", err);
+                console.warn("[Transcription] PCM send failed, buffering:", err);
               }
             }
+            // Socket down. Hold the audio rather than drop it: 30 seconds at
+            // 16kHz mono 16-bit is under a megabyte, and a clinician mid
+            // sentence when the connection blips should not lose the sentence.
+            const MAX_BACKLOG_BYTES = 30 * PCM_BACKLOG_RATE_BYTES;
+            if (pcmBacklogBytesRef.current + frame.byteLength > MAX_BACKLOG_BYTES) {
+              // Oldest first: the newest speech is the most recoverable, and
+              // the full recording is re-transcribed after Stop regardless.
+              const dropped = pcmBacklogRef.current.shift();
+              if (dropped) pcmBacklogBytesRef.current -= dropped.byteLength;
+            }
+            pcmBacklogRef.current.push(frame);
+            pcmBacklogBytesRef.current += frame.byteLength;
           },
           liveSession.sampleRate,
         );

@@ -92,7 +92,16 @@ export const DEEPGRAM_PRIVACY_PARAMS: Record<string, string> = {
  * model means a vendor release could change clinical transcription with no
  * deployment on our side and no way to notice.
  */
-export const DEFAULT_DEEPGRAM_MODEL = "nova-3-medical";
+/**
+ * Non-medical by the client's choice, not by oversight.
+ *
+ * Their testing found the medical variants gave at best a mild gain on medical
+ * terms, sometimes at the cost of general speech accuracy, and sometimes no
+ * measurable difference — not enough to justify the additional cost. The same
+ * conclusion applies to the primary vendor's medical mode, which is likewise
+ * left off.
+ */
+export const DEFAULT_DEEPGRAM_MODEL = "nova-3";
 
 /**
  * The Deepgram model actually in use, from configuration.

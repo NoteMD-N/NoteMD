@@ -6,7 +6,9 @@ import {
   parseMessage,
   usesRecorderOutput,
 } from "@/lib/streaming/protocol";
-import { TARGET_SAMPLE_RATE, encodeForVendor, floatTo16BitPcm, resample } from "@/lib/streaming/pcm";
+import { PCM_BYTES_PER_SECOND, TARGET_SAMPLE_RATE, encodeForVendor, floatTo16BitPcm, resample } from "@/lib/streaming/pcm";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * Two vendors, two wire formats, one transcript.
@@ -205,5 +207,43 @@ describe("encoding microphone samples", () => {
   it("survives an empty buffer and a nonsense rate", () => {
     expect(resample(new Float32Array(0), 48000, 16000).length).toBe(0);
     expect(() => encodeForVendor(new Float32Array([0.1]), 0, 16000)).not.toThrow();
+  });
+});
+
+describe("recovering from a dropped connection", () => {
+  const ROOT = join(__dirname, "../..");
+  const record = () => readFileSync(join(ROOT, "src/pages/Record.tsx"), "utf8");
+
+  it("sizes the backlog in seconds of speech", () => {
+    expect(PCM_BYTES_PER_SECOND).toBe(TARGET_SAMPLE_RATE * 2);
+    // 30 seconds is under a megabyte, which is the point: a blip mid-sentence
+    // should not cost the sentence.
+    expect(30 * PCM_BYTES_PER_SECOND).toBeLessThan(1_000_000);
+  });
+
+  it("holds audio while the socket is down instead of discarding it", () => {
+    // The client reported the connection dropping mid-recording. Raw PCM has
+    // no container state, so unlike the recorder's WebM it can be replayed.
+    const src = record();
+    expect(src).toMatch(/PCM send failed, buffering/);
+    expect(src).toMatch(/pcmBacklogRef\.current\.push\(frame\)/);
+  });
+
+  it("replays that audio once the socket is back", () => {
+    expect(record()).toMatch(/Replayed \$\{\(replayed \/ PCM_BACKLOG_RATE_BYTES\)/);
+  });
+
+  it("does not restart the recorder for a vendor it does not feed", () => {
+    // Restarting it would inject a second container header mid-file into the
+    // recording that is saved and re-transcribed, for no benefit: a raw-PCM
+    // vendor is fed by the microphone tap, not the recorder.
+    const src = record();
+    expect(src).toMatch(/if \(!liveSession \|\| usesRecorderOutput\(liveSession\)\) \{/);
+  });
+
+  it("bounds the backlog so a long outage cannot grow without limit", () => {
+    const src = record();
+    expect(src).toMatch(/MAX_BACKLOG_BYTES/);
+    expect(src).toMatch(/pcmBacklogRef\.current\.shift\(\)/);
   });
 });

@@ -13,6 +13,14 @@
 export const TARGET_SAMPLE_RATE = 16000;
 
 /**
+ * Bytes of encoded audio per second at the target rate: mono, 16-bit.
+ *
+ * Used to size the backlog held while a socket is down, so the bound is
+ * expressed in seconds of speech rather than an opaque byte count.
+ */
+export const PCM_BYTES_PER_SECOND = TARGET_SAMPLE_RATE * 2;
+
+/**
  * Converts float samples to 16-bit signed PCM.
  *
  * Values outside -1..1 are clamped rather than allowed to wrap. A wrapped
