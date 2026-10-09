@@ -12,6 +12,7 @@ import {
 import { letterRoute } from "@/lib/letter-route";
 import { SegmentAssembler, appendSegments } from "@/lib/segment-assembly";
 import ConsultationContext from "@/components/ConsultationContext";
+import ContextSummaryPanel from "@/components/ContextSummaryPanel";
 import { PcmCapture } from "@/lib/streaming/pcm-capture";
 import { PCM_BYTES_PER_SECOND as PCM_BACKLOG_RATE_BYTES } from "@/lib/streaming/pcm";
 import {
@@ -2888,6 +2889,12 @@ const Record = () => {
                     </div>
                   </div>
                 )}
+                {/* Background for the consultation being reviewed. Reference
+                    only — it did not contribute to anything below it. */}
+                <div className="mb-4">
+                  <ContextSummaryPanel recordingId={autoDraftRecordingIdRef.current} />
+                </div>
+
                 {segmentGaps > 0 && (
                   <div className="mb-4 px-3 py-2 rounded-md bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 text-xs text-red-800 dark:text-red-300 flex gap-2">
                     <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />

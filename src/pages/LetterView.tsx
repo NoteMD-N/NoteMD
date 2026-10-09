@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import ContextSummaryPanel from "@/components/ContextSummaryPanel";
 import { useNavigate, useLocation } from "react-router-dom";
 import { letterIdFromHash } from "@/lib/letter-route";
 import { supabase } from "@/integrations/supabase/client";
@@ -507,6 +508,13 @@ const LetterView = () => {
             </Button>
           </CardContent>
         </Card>
+
+        {/* Background gathered before the consultation. Sits with the
+            transcript rather than near the letter, because like the
+            transcript it is source material the clinician may want to check
+            — and unlike the transcript it did not contribute to the letter
+            at all. */}
+        <ContextSummaryPanel recordingId={letter?.recording_id} />
 
         {/* Transcript — last on the page and collapsed by default.
             By the time a letter exists the clinician's task is reviewing and
