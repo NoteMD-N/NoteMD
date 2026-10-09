@@ -31,6 +31,13 @@ export const RATE_LIMITS = {
    */
   "transcribe-audio": { limit: 1500, windowSeconds: 3600 },
 
+  /**
+   * Summarising uploaded background documents. Done once per consultation,
+   * occasionally retried, and each call can carry thirty pages — so the
+   * ceiling is low by design.
+   */
+  "summarise-context": { limit: 40, windowSeconds: 3600 },
+
   /** Letter generation — the expensive model call. */
   "generate-letter": { limit: 60, windowSeconds: 3600 },
   "regenerate-letter": { limit: 90, windowSeconds: 3600 },
