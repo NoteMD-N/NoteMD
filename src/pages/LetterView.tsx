@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import {
   Save,
+  ChevronDown,
   FileText,
   Copy,
   Sparkles,
@@ -379,23 +380,6 @@ const LetterView = () => {
           </Card>
         )}
 
-        {/* Transcript */}
-        {letter?.transcript && (
-          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
-            <CardHeader className="pb-2">
-              <CardTitle className="font-heading text-sm text-muted-foreground flex items-center gap-2">
-                <FileText className="h-4 w-4" />
-                Transcript
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-                {letter.transcript}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
         {/* Editable Letter */}
         <Card className="rounded-2xl border-border/60 shadow-[0_2px_8px_rgba(21,33,52,0.06)]">
           <CardHeader className="pb-2">
@@ -523,6 +507,29 @@ const LetterView = () => {
             </Button>
           </CardContent>
         </Card>
+
+        {/* Transcript — last on the page and collapsed by default.
+            By the time a letter exists the clinician's task is reviewing and
+            editing it, not re-reading what they said. The transcript stays
+            one click away rather than occupying the screen above the letter
+            it produced. It remains the record the letter was generated from,
+            so it is never hidden outright. */}
+        {letter?.transcript && (
+          <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
+            <details className="group">
+              <summary className="cursor-pointer list-none p-6 pb-4 flex items-center gap-2 text-sm text-muted-foreground font-heading hover:text-foreground transition-colors">
+                <FileText className="h-4 w-4 shrink-0" />
+                Transcript
+                <ChevronDown className="h-4 w-4 ml-auto transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="px-6 pb-6">
+                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+                  {letter.transcript}
+                </p>
+              </div>
+            </details>
+          </Card>
+        )}
       </div>
     </div>
   );
