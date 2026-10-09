@@ -48,19 +48,50 @@ export interface PatientIdentifiers {
  */
 export function placeholderPatientHeader(patient: PatientIdentifiers): string {
   return [
-    patient.name ? `Patient Name: ${PATIENT_NAME_TOKEN}` : null,
+    // The name is sent as written, not tokenised. See WHY_THE_NAME_IS_SENT.
+    patient.name ? `Patient Name: ${patient.name}` : null,
     patient.id ? `Patient ID / NHS Number: ${PATIENT_ID_TOKEN}` : null,
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-/** Instruction appended to the system prompt so the tokens survive verbatim. */
+/**
+ * Why the name is sent while the NHS number is not.
+ *
+ * Tokenising the name assumed it only ever needed to appear in a header. Real
+ * use showed otherwise: clinicians say the patient's name aloud, the
+ * transcriber renders it phonetically — "Siobhan O'Brien" as "Shivawn
+ * O'Brian" — and the literal replacement below cannot match a spelling it has
+ * never seen. The misspelling therefore survived into the prompt and into the
+ * letter body, beside a correctly substituted header. Two spellings of one
+ * patient in one clinical letter.
+ *
+ * It also means the tokenisation was not achieving what it claimed in this
+ * case. A recognisable near-miss of the name was already reaching the
+ * provider whenever it was spoken; withholding the correct spelling bought
+ * almost no privacy and cost correctness.
+ *
+ * So the name is sent, and the model is told to use that spelling throughout
+ * and to correct phonetic variants of it in the transcript.
+ *
+ * The NHS number is different and stays tokenised. It is rarely spoken, a
+ * transcription error makes it a different number rather than a misspelling
+ * of the same one, and it is the identifier that most directly keys into
+ * national records.
+ */
+export const WHY_THE_NAME_IS_SENT =
+  "Transcription renders a spoken name phonetically, which literal replacement cannot match.";
+
+/** Instruction appended to the system prompt so the identifiers come out right. */
 export const PLACEHOLDER_INSTRUCTION =
-  `The patient header contains placeholder tokens such as ${PATIENT_NAME_TOKEN} ` +
-  `and ${PATIENT_ID_TOKEN}. Reproduce them exactly as written wherever the ` +
-  `patient's name or identifier belongs. Do not replace them, expand them, ` +
-  `translate them, or invent a name.`;
+  `The patient header gives the patient's name. Use exactly that spelling ` +
+  `wherever the patient is named. The transcript may contain phonetic or ` +
+  `misspelled renderings of it, because it was dictated aloud — correct ` +
+  `those to the spelling in the header rather than reproducing them. ` +
+  `The header also contains the placeholder token ${PATIENT_ID_TOKEN}. ` +
+  `Reproduce it exactly as written wherever the patient's identifier ` +
+  `belongs. Do not replace it, expand it, translate it, or invent a number.`;
 
 /**
  * Puts the real identifiers back into a generated letter.
@@ -105,12 +136,15 @@ export function redactPatientIdentifiers(
   patient: PatientIdentifiers,
 ): string {
   const replacements: [string, string][] = [];
-  const name = (patient.name ?? "").trim();
   const id = (patient.id ?? "").trim();
 
-  // Below three characters a value matches incidentally — an initial, or a
-  // single digit — and replacing it would mangle unrelated words.
-  if (name.length >= 3) replacements.push([name, PATIENT_NAME_TOKEN]);
+  // The name is deliberately not replaced here. The model is given the
+  // correct spelling in the header and asked to correct phonetic renderings
+  // in the transcript, which it cannot do if we have blanked the only
+  // occurrences it needs to see.
+  //
+  // Below three characters a value matches incidentally — a single digit —
+  // and replacing it would mangle unrelated numbers.
   if (id.length >= 3) replacements.push([id, PATIENT_ID_TOKEN]);
   replacements.sort((a, b) => b[0].length - a[0].length);
 
@@ -122,21 +156,23 @@ export function redactPatientIdentifiers(
 }
 
 /**
- * True if any identifier we hold appears in the text sent to the provider.
+ * True if an identifier that must not leave our systems appears in the text.
  *
  * Used to assert the property rather than trust it: the prompt is assembled
  * from several pieces and a later edit could reintroduce a value without
  * anyone noticing.
+ *
+ * The name is no longer one of these. It is sent deliberately, so asserting
+ * its absence would now fail on every correct request — and a check that has
+ * to be suppressed to pass is worse than no check, because the next person
+ * suppresses it for the NHS number too.
  */
 export function containsDirectIdentifier(
   text: string,
   patient: PatientIdentifiers,
 ): boolean {
-  const name = (patient.name ?? "").trim();
   const id = (patient.id ?? "").trim();
-  // Very short values would match incidentally — an initial, or a one-digit
-  // identifier — and are not worth asserting on.
-  if (name.length >= 3 && text.includes(name)) return true;
-  if (id.length >= 3 && text.includes(id)) return true;
-  return false;
+  // A one- or two-digit value would match incidentally and is not worth
+  // asserting on.
+  return id.length >= 3 && text.includes(id);
 }

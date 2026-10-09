@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   PATIENT_ID_TOKEN,
   PATIENT_NAME_TOKEN,
+  PLACEHOLDER_INSTRUCTION,
   containsDirectIdentifier,
   placeholderPatientHeader,
   redactPatientIdentifiers,
@@ -39,32 +40,42 @@ const regenerateLetter = readFileSync(
 const PATIENT = { name: "Jane O'Brien-Smith", id: "485 777 3456" };
 
 describe("what is sent to the provider", () => {
-  it("carries tokens instead of the patient's name and identifier", () => {
+  it("sends the name and a token for the NHS number", () => {
+    // The name is sent so the model can spell it correctly. Dictated aloud it
+    // arrives phonetically — "Siobhan O'Brien" as "Shivawn O'Brian" — and a
+    // literal replacement cannot match a spelling it has never seen, so the
+    // misspelling reached the letter beside a correctly substituted header.
     const header = placeholderPatientHeader(PATIENT);
-    expect(header).toContain(PATIENT_NAME_TOKEN);
+    expect(header).toContain("Jane O'Brien-Smith");
     expect(header).toContain(PATIENT_ID_TOKEN);
-    expect(header).not.toContain("Jane");
     expect(header).not.toContain("485 777 3456");
   });
 
-  it("omits a token for an identifier we do not hold", () => {
+  it("omits the identifier line when we do not hold one", () => {
     // Asking the model for a field we cannot fill afterwards would leave a
     // visible placeholder in the finished letter.
     const header = placeholderPatientHeader({ name: "Jane Smith", id: null });
-    expect(header).toContain(PATIENT_NAME_TOKEN);
+    expect(header).toContain("Jane Smith");
     expect(header).not.toContain(PATIENT_ID_TOKEN);
   });
 
-  it("strips identifiers already present in an existing draft", () => {
-    // Regeneration sends the current letter back, and that letter has the
-    // real values substituted into it.
+  it("strips the NHS number from an existing draft but keeps the name", () => {
+    // Regeneration sends the current letter back. The number must not go out
+    // again; the name must stay, or the refinement loses the spelling it was
+    // given in the first place.
     const draft = `Dear Colleague,\n\nRe: ${PATIENT.name} (${PATIENT.id})\n\nSeen today.`;
     const out = redactPatientIdentifiers(draft, PATIENT);
-    expect(out).not.toContain("Jane O'Brien-Smith");
+    expect(out).toContain("Jane O'Brien-Smith");
     expect(out).not.toContain("485 777 3456");
-    expect(out).toContain(PATIENT_NAME_TOKEN);
     expect(out).toContain(PATIENT_ID_TOKEN);
     expect(out).toContain("Seen today.");
+  });
+
+  it("tells the model to correct phonetic spellings of the name", () => {
+    // Without this the model reproduces what the transcript says, which is
+    // the whole defect.
+    expect(PLACEHOLDER_INSTRUCTION).toMatch(/phonetic|misspel/i);
+    expect(PLACEHOLDER_INSTRUCTION).toMatch(/exactly that spelling/i);
   });
 
   it("leaves very short values alone", () => {
@@ -96,10 +107,10 @@ describe("the round trip is lossless", () => {
     }
   });
 
-  it("replaces every occurrence, not just the first", () => {
-    const original = `${PATIENT.name} attended. ${PATIENT.name} was examined. ${PATIENT.name} left.`;
+  it("replaces every occurrence of the identifier, not just the first", () => {
+    const original = `NHS ${PATIENT.id} seen. Confirmed ${PATIENT.id}. Filed under ${PATIENT.id}.`;
     const redacted = redactPatientIdentifiers(original, PATIENT);
-    expect(redacted).not.toContain("Jane");
+    expect(redacted).not.toContain("485 777 3456");
     expect(restorePatientIdentifiers(redacted, PATIENT)).toBe(original);
   });
 
@@ -127,12 +138,14 @@ describe("the round trip is lossless", () => {
 });
 
 describe("the leak check", () => {
-  it("detects an identifier that reached the prompt", () => {
-    expect(containsDirectIdentifier(`Patient: ${PATIENT.name}`, PATIENT)).toBe(true);
+  it("detects an NHS number that reached the prompt", () => {
     expect(containsDirectIdentifier(`NHS ${PATIENT.id}`, PATIENT)).toBe(true);
   });
 
-  it("passes a prompt carrying only tokens", () => {
+  it("does not flag the name, which is sent on purpose", () => {
+    // A check that has to be suppressed to pass is worse than no check: the
+    // next person suppresses it for the NHS number too.
+    expect(containsDirectIdentifier(`Patient: ${PATIENT.name}`, PATIENT)).toBe(false);
     expect(containsDirectIdentifier(placeholderPatientHeader(PATIENT), PATIENT)).toBe(false);
   });
 
