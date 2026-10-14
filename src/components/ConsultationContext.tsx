@@ -21,6 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   FileText,
@@ -33,6 +34,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { MAX_PAGES, extractDocument, isSupportedDocument } from "@/lib/context/extract";
+import FormattedText from "@/components/FormattedText";
 
 /** One upload, as the clinician sees it. */
 interface ContextDocument {
@@ -56,6 +58,13 @@ export default function ConsultationContext({ onContextIdChange, disabled }: Pro
   const [documents, setDocuments] = useState<ContextDocument[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
   const [usedOcr, setUsedOcr] = useState(false);
+  /**
+   * Whether this background may inform the letter.
+   *
+   * Off unless the clinician turns it on. The safe outcome — a letter written
+   * from the consultation alone — is what not deciding produces.
+   */
+  const [includeInLetter, setIncludeInLetter] = useState(false);
 
   const [uploading, setUploading] = useState(false);
   const [summarising, setSummarising] = useState(false);
@@ -82,6 +91,22 @@ export default function ConsultationContext({ onContextIdChange, disabled }: Pro
     onContextIdChange?.(data.id);
     return data.id;
   }, [onContextIdChange]);
+
+  const setInclusion = useCallback(async (next: boolean) => {
+    setIncludeInLetter(next);
+    try {
+      const id = await ensureContext();
+      await supabase
+        .from("consultation_contexts")
+        .update({ include_in_letter: next })
+        .eq("id", id);
+    } catch (err) {
+      // Revert rather than show a toggle that does not reflect what the
+      // letter will actually be written from.
+      setIncludeInLetter(!next);
+      toast.error(err instanceof Error ? err.message : "Could not save that choice");
+    }
+  }, [ensureContext]);
 
   const persistNotes = useCallback(async (value: string) => {
     if (!value.trim() && !contextIdRef.current) return;
@@ -286,7 +311,7 @@ export default function ConsultationContext({ onContextIdChange, disabled }: Pro
           Consultation context
           <span className="ml-auto text-xs font-normal text-muted-foreground">Optional</span>
         </CardTitle>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Background for your own reference before the consultation. It is not used to
           write the letter.
         </p>
@@ -295,7 +320,7 @@ export default function ConsultationContext({ onContextIdChange, disabled }: Pro
       <CardContent className="space-y-4">
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Notes</label>
+            <label className="text-sm font-medium text-muted-foreground">Notes</label>
             <Button
               type="button"
               variant="ghost"
@@ -318,14 +343,14 @@ export default function ConsultationContext({ onContextIdChange, disabled }: Pro
             onChange={(e) => setNotes(e.target.value)}
             onBlur={() => void persistNotes(notes)}
             placeholder="Anything you want to hand to yourself before this consultation — the reason for referral, what you want to cover, questions to ask."
-            rows={3}
+            rows={4}
             className="text-sm resize-y"
             disabled={disabled}
           />
         </div>
 
         <div>
-          <label className="text-xs font-medium text-muted-foreground">
+          <label className="text-sm font-medium text-muted-foreground">
             Supporting documents
           </label>
           <input
@@ -365,7 +390,7 @@ export default function ConsultationContext({ onContextIdChange, disabled }: Pro
           {documents.length > 0 && (
             <ul className="mt-3 space-y-1.5">
               {documents.map((doc) => (
-                <li key={doc.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+                <li key={doc.id} className="flex items-center gap-2 text-sm text-muted-foreground">
                   <FileText className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">{doc.fileName}</span>
                   <span className="shrink-0 text-[11px] rounded-full border px-1.5 py-0.5">
@@ -378,7 +403,7 @@ export default function ConsultationContext({ onContextIdChange, disabled }: Pro
           )}
 
           {scanned > 0 && (
-            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400 flex gap-1.5">
+            <p className="mt-2 text-sm text-amber-700 dark:text-amber-400 flex gap-1.5">
               <TriangleAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" />
               {scanned === 1 ? "One document is" : `${scanned} documents are`} scanned and
               will be read from the page image. Check anything you intend to rely on
@@ -387,10 +412,32 @@ export default function ConsultationContext({ onContextIdChange, disabled }: Pro
           )}
         </div>
 
+        {(notes.trim() || documents.length > 0) && (
+          <div className="rounded-lg border border-border/60 p-3 flex items-start gap-3">
+            <Switch
+              id="context-in-letter"
+              checked={includeInLetter}
+              onCheckedChange={(v) => void setInclusion(v)}
+              disabled={disabled}
+              className="mt-0.5"
+            />
+            <label htmlFor="context-in-letter" className="cursor-pointer">
+              <span className="text-sm font-medium block">
+                Use this background when writing the letter
+              </span>
+              <span className="text-xs text-muted-foreground block mt-0.5">
+                {includeInLetter
+                  ? "The letter will be informed by this background as well as the consultation. It is not verified, and anything read from a scan may be misread — check the letter against what was actually discussed."
+                  : "Off: the letter will be written from the consultation alone. This background stays here for your reference."}
+              </span>
+            </label>
+          </div>
+        )}
+
         {summary && (
           <div className="rounded-lg border border-border/60 bg-muted/40 p-3">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs font-medium">Reference summary</span>
+              <span className="text-sm font-medium">Reference summary</span>
               {usedOcr && (
                 <span className="text-[11px] text-amber-700 dark:text-amber-400">
                   includes scanned pages
@@ -406,10 +453,11 @@ export default function ConsultationContext({ onContextIdChange, disabled }: Pro
                 <Trash2 className="h-3 w-3" /> Hide
               </Button>
             </div>
-            <p className="text-xs whitespace-pre-wrap leading-relaxed text-foreground">
-              {summary}
-            </p>
-            <p className="mt-2 text-[11px] text-muted-foreground">
+            <FormattedText
+              text={summary}
+              className="text-sm leading-relaxed text-foreground space-y-1"
+            />
+            <p className="mt-2 text-xs text-muted-foreground">
               Generated from the uploaded documents for your reference. It is not used to
               write the letter, and has not been checked against the originals.
             </p>

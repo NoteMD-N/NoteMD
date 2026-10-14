@@ -6,6 +6,7 @@ import { useInactivity } from "@/hooks/useInactivityTimeout";
 import {
   AudioLevelMonitor,
   levelWarning,
+  shouldCutSegment,
   shouldTranscribeSegment,
   type MicLevelState,
 } from "@/lib/audio-level";
@@ -1259,10 +1260,33 @@ const Record = () => {
           segmentRecorderRef.current = segRecorder;
           segRecorder.start();
 
+          // Checked often, cut at pauses. A fixed ten-second cut is what sent
+          // the model long silent tails to account for, and a Whisper-family
+          // model fills silence with invented text rather than returning
+          // nothing — which is why hallucinations clustered at the end of a
+          // recording, where the tail was longest.
+          let segmentStartedAt = Date.now();
+          let segmentHadSpeech = false;
+
           segmentTickRef.current = setInterval(() => {
             const active = segmentRecorderRef.current;
             if (!active || active.state !== "recording") return;
             if (isPausedRef.current) return; // don't transcribe silence during a pause
+
+            const monitor = levelMonitorRef.current;
+            const now = Date.now();
+            const msSinceSpeech = monitor && !monitor.unavailable ? monitor.msSinceSpeech(now) : 0;
+            if (msSinceSpeech === 0) segmentHadSpeech = true;
+
+            if (!shouldCutSegment({
+              elapsedMs: now - segmentStartedAt,
+              msSinceSpeech,
+              hadSpeech: segmentHadSpeech,
+            })) return;
+
+            segmentStartedAt = now;
+            segmentHadSpeech = false;
+
             try {
               active.stop();
               // start() throws if the previous stop hasn't fully settled; a
@@ -1277,7 +1301,7 @@ const Record = () => {
             } catch (err) {
               console.warn("[Segment] Stop failed:", err);
             }
-          }, 10000);
+          }, 250);
         } catch (err) {
           console.warn("[Segment] Could not start segment recorder:", err);
         }
@@ -2484,15 +2508,6 @@ const Record = () => {
             </div>
           )}
 
-          {/* Preparation, so it appears only before recording starts. Mid
-              consultation the clinician's attention belongs on the patient,
-              and afterwards the context has already served its purpose. */}
-          {stage === "record" && !isRecording && !hasRecording && !processing && (
-            <ConsultationContext
-              onContextIdChange={(id) => { contextIdRef.current = id; }}
-            />
-          )}
-
           {stage === "record" && (
           <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4 items-stretch">
             {/* Left panel — Recording controls */}
@@ -2826,6 +2841,15 @@ const Record = () => {
             </div>
           </div>
           )}
+
+          {/* Below the recording panel and present at every stage — before,
+              during, and while reviewing the transcript. A clinician who
+              remembers a detail mid-consultation should not have to leave the
+              page to add it, and reviewing the transcript is exactly when the
+              earlier correspondence is worth having open. */}
+          <ConsultationContext
+            onContextIdChange={(id) => { contextIdRef.current = id; }}
+          />
 
           {/* Review stage */}
           {stage === "review" && (

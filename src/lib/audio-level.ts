@@ -41,6 +41,51 @@ export const SUSTAINED_LOW_MS = 4000;
 
 export type MicLevelState = "ok" | "low" | "silent";
 
+/** Longest a segment may run before it is cut regardless of speech. */
+export const SEGMENT_MAX_MS = 10000;
+
+/**
+ * Silence after speech that ends a segment early.
+ *
+ * Long enough not to cut mid-sentence at an ordinary breath, short enough
+ * that a segment does not accumulate a long silent tail.
+ */
+export const SEGMENT_PAUSE_MS = 1200;
+
+/** Below this a segment is too short to hold a useful utterance. */
+export const SEGMENT_MIN_MS = 1500;
+
+export interface SegmentCutInput {
+  /** How long the current segment has been recording. */
+  elapsedMs: number;
+  /** Time since the level was last at speech volume. */
+  msSinceSpeech: number;
+  /** Whether this segment has contained speech at all. */
+  hadSpeech: boolean;
+}
+
+/**
+ * Whether to end the current segment now.
+ *
+ * Cutting on the clock alone is what produces hallucinations at the end of a
+ * recording. A clinician who says one sentence and then pauses to examine
+ * hands the model two seconds of speech and eight of silence, and a
+ * Whisper-family model fills silence with plausible invented text rather than
+ * returning nothing. Cutting at the pause instead means each segment is
+ * shaped like the speech in it, and the last one ends shortly after the last
+ * word rather than trailing into whatever came after.
+ *
+ * A segment that has heard nothing is never cut early: there is no utterance
+ * to close, and cutting would produce a stream of empty segments through any
+ * quiet stretch.
+ */
+export function shouldCutSegment(input: SegmentCutInput): boolean {
+  if (input.elapsedMs >= SEGMENT_MAX_MS) return true;
+  if (!input.hadSpeech) return false;
+  if (input.elapsedMs < SEGMENT_MIN_MS) return false;
+  return input.msSinceSpeech >= SEGMENT_PAUSE_MS;
+}
+
 /**
  * Root-mean-square amplitude of a buffer, as dBFS.
  *
@@ -153,6 +198,17 @@ export class AudioLevelMonitor {
     if (!this.analyser) return "ok"; // unmonitored; do not cry wolf
     if (now - this.lastOkAt < SUSTAINED_LOW_MS) return "ok";
     return classifyLevel(this.currentDbfs);
+  }
+
+  /**
+   * Milliseconds since the level was last at speech volume.
+   *
+   * Returns 0 when nothing is being measured, so a caller with no monitor
+   * behaves as though speech is continuous and falls back to the clock.
+   */
+  msSinceSpeech(now: number = Date.now()): number {
+    if (!this.analyser) return 0;
+    return now - this.lastOkAt;
   }
 
   /** Loudest level since the previous call, then resets. */

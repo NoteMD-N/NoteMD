@@ -23,27 +23,50 @@ const ROOT = join(__dirname, "../..");
 const fnDir = join(ROOT, "supabase/functions");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 
-describe("context never reaches letter generation", () => {
+describe("context reaches letter generation only when explicitly chosen", () => {
   const letterFunctions = ["generate-letter", "regenerate-letter"];
+  const generate = () => read("supabase/functions/generate-letter/index.ts");
 
-  it("the letter functions do not import anything from the context modules", () => {
-    for (const fn of letterFunctions) {
-      const src = read(`supabase/functions/${fn}/index.ts`);
-      expect(src, `${fn} imports the context summary prompt`).not.toMatch(/context-summary/);
-      expect(src, `${fn} reads the context tables`).not.toMatch(/consultation_contexts|context_documents/);
-    }
+  it("is gated on the stored opt-in, not on the request", () => {
+    // The client asked for the choice. Reading it from the row rather than
+    // the request body is what makes it auditable afterwards — "was this
+    // letter written with uploaded background in scope?" is asked about a
+    // specific letter, sometimes long after it was signed.
+    const src = generate();
+    expect(src).toMatch(/if \(ctx\?\.include_in_letter\)/);
+    expect(src).toMatch(/\.eq\("recording_id", recording_id\)/);
   });
 
-  it("the letter functions accept no context field from the caller", () => {
-    // The tables are covered above. This covers the other way in: a client
-    // passing a summary straight into the request body, which would bypass
-    // every database-level separation.
-    for (const fn of letterFunctions) {
-      const src = read(`supabase/functions/${fn}/index.ts`);
-      expect(src, `${fn} accepts a context field`).not.toMatch(
-        /context_summary|contextSummary|context_id|consultation_context/,
-      );
-    }
+  it("adds nothing to the prompt when the clinician did not opt in", () => {
+    // contextBlock starts empty and is only ever assigned inside the gate,
+    // so not deciding produces a letter written from the consultation alone.
+    const src = generate();
+    expect(src).toMatch(/let contextBlock = "";/);
+    const assignments = src.match(/contextBlock\s*=/g) ?? [];
+    expect(assignments.length).toBe(2); // the empty initialiser and the gated one
+  });
+
+  it("tells the model the background is unverified and may be misread", () => {
+    // Some of it was read from scanned pages. A summary presented without
+    // that framing invites being asserted as history.
+    const src = generate();
+    expect(src).toMatch(/has not been\s*" \+\s*"verified|NOT part of the consultation/);
+    expect(src).toMatch(/never introduce a diagnosis, medication or dose/);
+  });
+
+  it("refuses to let background alone introduce clinical content", () => {
+    expect(generate()).toMatch(/unless the consultation transcript also/);
+  });
+
+  it("records against the letter whether background was in scope", () => {
+    expect(generate()).toMatch(/context_used: contextUsed/);
+  });
+
+  it("regeneration does not quietly pull context in", () => {
+    // Refinement works from the existing draft. Pulling background in there
+    // too would apply the choice a second time without it being made again.
+    const src = read("supabase/functions/regenerate-letter/index.ts");
+    expect(src).not.toMatch(/consultation_contexts|context_documents/);
   });
 
   it("the summariser does not import the letter prompts", () => {
@@ -61,7 +84,8 @@ describe("context never reaches letter generation", () => {
 
   it("no function outside the summariser reads the context tables", () => {
     // Catches a future function wiring context in from somewhere new.
-    const allowed = new Set(["summarise-context"]);
+    // generate-letter reads it behind the opt-in, covered above.
+    const allowed = new Set(["summarise-context", "generate-letter"]);
     for (const entry of readdirSync(fnDir, { withFileTypes: true })) {
       if (!entry.isDirectory() || allowed.has(entry.name)) continue;
       let src: string;

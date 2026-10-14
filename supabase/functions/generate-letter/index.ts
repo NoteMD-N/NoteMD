@@ -22,6 +22,7 @@ import {
   placeholderPatientHeader,
   restorePatientIdentifiers,
 } from "../_shared/identifiers.ts";
+import { stripMarkdown } from "../_shared/plain-text.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { redactVendorError, redactError } from "../_shared/redact.ts";
 
@@ -841,9 +842,52 @@ The clinician remains entirely responsible for clinical content. Your role is do
       SAFETY_CLAUSE + basePrompt + signatureGuidance +
       (patientHeader ? `\n\n${PLACEHOLDER_INSTRUCTION}` : "");
 
-    const userPrompt = mode === "dictation"
+    // Background the clinician explicitly opted in, and only then.
+    //
+    // The default is to write from the consultation alone, which is what
+    // every letter was written from before this existed. A clinician who
+    // never notices the toggle gets the safe behaviour.
+    //
+    // The flag is read from the row rather than taken from the request, so
+    // the choice is auditable: "was this letter written with uploaded
+    // background in scope?" is a question that gets asked about a specific
+    // letter, sometimes long after it was signed.
+    let contextBlock = "";
+    let contextUsed = false;
+    {
+      const { data: ctx } = await supabase
+        .from("consultation_contexts")
+        .select("notes, summary, include_in_letter, summary_status")
+        .eq("recording_id", recording_id)
+        .maybeSingle();
+
+      if (ctx?.include_in_letter) {
+        const pieces = [
+          ctx.notes?.trim() ? `Clinician's own notes:\n${ctx.notes.trim()}` : "",
+          ctx.summary_status === "ready" && ctx.summary?.trim()
+            ? `From documents supplied before the consultation:\n${ctx.summary.trim()}`
+            : "",
+        ].filter(Boolean);
+
+        if (pieces.length > 0) {
+          contextUsed = true;
+          contextBlock =
+            "\n\n[BACKGROUND — SUPPLIED BEFORE THE CONSULTATION]\n" +
+            pieces.join("\n\n") +
+            "\n\nThis background is NOT part of the consultation and has not been " +
+            "verified. Some of it was read from scanned pages and may be misread. " +
+            "Use it only to inform wording and context. Do not state anything from " +
+            "it as established fact unless the consultation transcript also " +
+            "supports it, and never introduce a diagnosis, medication or dose that " +
+            "appears only here.";
+        }
+      }
+    }
+
+    const userPrompt = (mode === "dictation"
       ? `Please correct and enhance the following dictated note into a structured professional clinical document.\n\n[TRANSCRIPT]\n${transcript}`
-      : `Please convert the following consultation transcript into a comprehensive consultant-level clinical letter using the template above. Include all clinically relevant information and preserve chronology wherever possible.\n\n[TRANSCRIPT]\n${transcript}`;
+      : `Please convert the following consultation transcript into a comprehensive consultant-level clinical letter using the template above. Include all clinically relevant information and preserve chronology wherever possible.\n\n[TRANSCRIPT]\n${transcript}`)
+      + contextBlock;
 
     // The prompt is built from a safety clause, a template that the clinician
     // may have written themselves, and the transcript. Check the finished
@@ -855,7 +899,7 @@ The clinician remains entirely responsible for clinical content. Your role is do
         resource: "recording",
         resourceId: recording_id,
         outcome: "failure",
-        detail: { reason: "identifier_in_prompt" },
+        detail: { reason: "identifier_in_prompt", context_used: contextUsed },
       });
       console.error("[generate-letter] A direct identifier reached the prompt; refusing to send.");
       return new Response(
@@ -905,7 +949,11 @@ The clinician remains entirely responsible for clinical content. Your role is do
     // Substitution happens here, in the same scope that writes the row below,
     // using the same two variables. There is no lookup and no matching, so a
     // letter cannot acquire another patient's identifiers.
-    const rawLetter = gptData.choices[0].message.content;
+    // Markdown comes off before anything else. The prompt asks for no bold in
+    // three places and the model produces it regardless, and a letter is
+    // edited in a plain textarea, pasted into record systems, emailed and
+    // printed — nowhere in that chain does "**" mean anything.
+    const rawLetter = stripMarkdown(gptData.choices[0].message.content);
     const letterContent = restorePatientIdentifiers(rawLetter, {
       name: patient_name,
       id: patient_id,
@@ -953,6 +1001,9 @@ The clinician remains entirely responsible for clinical content. Your role is do
         template_id: chosenTemplate?.id ?? null,
         transcript_chars: transcript?.length ?? 0,
         letter_chars: letterContent?.length ?? 0,
+        // Whether uploaded background was in scope for this letter. Asked
+        // about a specific letter, sometimes long after it was signed.
+        context_used: contextUsed,
         status: "draft",
         identifier_tokens_expected: expectedTokens,
         identifier_tokens_restored: tokensFound,

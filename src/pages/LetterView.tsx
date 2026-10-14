@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { stripMarkdown } from "../../supabase/functions/_shared/plain-text";
 import ContextSummaryPanel from "@/components/ContextSummaryPanel";
 import { useNavigate, useLocation } from "react-router-dom";
 import { letterIdFromHash } from "@/lib/letter-route";
@@ -91,7 +92,10 @@ const LetterView = () => {
           return;
         }
         setLetter(data);
-        setEditedContent(data.letter_content || "");
+        // Letters generated before Markdown was stripped at source still
+        // carry it. Cleaning on load means the clinician never sees the
+        // asterisks, and the next save persists the clean version.
+        setEditedContent(stripMarkdown(data.letter_content || ""));
         setLoading(false);
 
         // Create a signed URL for the linked recording's audio so the user can review it

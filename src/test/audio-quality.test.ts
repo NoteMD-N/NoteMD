@@ -9,6 +9,10 @@ import {
   classifyLevel,
   levelWarning,
   rmsToDbfs,
+  SEGMENT_MAX_MS,
+  SEGMENT_MIN_MS,
+  SEGMENT_PAUSE_MS,
+  shouldCutSegment,
   shouldTranscribeSegment,
 } from "@/lib/audio-level";
 import {
@@ -210,5 +214,75 @@ describe("the defences are wired in", () => {
       );
       expect(src, `${fn} does not assess its transcript`).toMatch(/assessTranscript\(/);
     }
+  });
+});
+
+/**
+ * Where the end-of-recording hallucinations came from.
+ *
+ * Segments were cut on a fixed ten-second clock. A clinician who says one
+ * sentence and then pauses to examine handed the model two seconds of speech
+ * and eight of silence — and a Whisper-family model fills silence with
+ * plausible invented text rather than returning nothing. The tail was longest
+ * at the end of a recording, which is exactly where the client saw it.
+ */
+describe("ending a segment at the pause rather than the clock", () => {
+  it("cuts once a speaker has stopped", () => {
+    expect(shouldCutSegment({
+      elapsedMs: 4000, msSinceSpeech: SEGMENT_PAUSE_MS, hadSpeech: true,
+    })).toBe(true);
+  });
+
+  it("does not cut at an ordinary breath mid-sentence", () => {
+    // A pause between words is not the end of an utterance.
+    expect(shouldCutSegment({
+      elapsedMs: 4000, msSinceSpeech: 400, hadSpeech: true,
+    })).toBe(false);
+  });
+
+  it("never cuts a segment that has heard nothing", () => {
+    // Otherwise a quiet stretch produces a stream of empty segments, each one
+    // a request and each one a chance for the model to invent something.
+    expect(shouldCutSegment({
+      elapsedMs: 9000, msSinceSpeech: 9000, hadSpeech: false,
+    })).toBe(false);
+  });
+
+  it("still cuts at the ceiling, so a continuous talker is transcribed as they go", () => {
+    expect(shouldCutSegment({
+      elapsedMs: SEGMENT_MAX_MS, msSinceSpeech: 0, hadSpeech: true,
+    })).toBe(true);
+  });
+
+  it("does not cut a segment too short to hold an utterance", () => {
+    expect(shouldCutSegment({
+      elapsedMs: SEGMENT_MIN_MS - 1, msSinceSpeech: 5000, hadSpeech: true,
+    })).toBe(false);
+  });
+
+  it("keeps the silent tail short across a realistic dictation", () => {
+    // One sentence, then a long pause — the shape that produced the problem.
+    // The segment must close near the end of the speech, not eight seconds
+    // later.
+    let elapsed = 0;
+    let cutAt: number | null = null;
+    for (let t = 250; t <= 10000; t += 250) {
+      elapsed = t;
+      const msSinceSpeech = t <= 2000 ? 0 : t - 2000; // speech stops at 2s
+      if (shouldCutSegment({ elapsedMs: elapsed, msSinceSpeech, hadSpeech: true })) {
+        cutAt = t;
+        break;
+      }
+    }
+    expect(cutAt).not.toBeNull();
+    // Silence carried into the request, in milliseconds.
+    expect(cutAt! - 2000).toBeLessThanOrEqual(SEGMENT_PAUSE_MS + 250);
+  });
+
+  it("is wired into the recorder", () => {
+    const record = readFileSync(join(ROOT, "src/pages/Record.tsx"), "utf8");
+    expect(record).toMatch(/shouldCutSegment\(\{/);
+    // Checked often enough to land near the pause rather than the clock.
+    expect(record).toMatch(/\}, 250\);/);
   });
 });

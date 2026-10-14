@@ -16,6 +16,7 @@ import {
   redactPatientIdentifiers,
   restorePatientIdentifiers,
 } from "../_shared/identifiers.ts";
+import { stripMarkdown } from "../_shared/plain-text.ts";
 import { checkRateLimit, rateLimitedResponse } from "../_shared/rate-limit.ts";
 import { redactVendorError, redactError } from "../_shared/redact.ts";
 
@@ -251,8 +252,10 @@ revised letter.`
     }
 
     const gptData = await gptResponse.json();
+    // Stripped here too: otherwise a refinement reintroduces the formatting
+    // generation removed, and the clinician deletes the same asterisks twice.
     const newContent = restorePatientIdentifiers(
-      gptData.choices[0].message.content,
+      stripMarkdown(gptData.choices[0].message.content),
       patient,
     );
 

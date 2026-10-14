@@ -19,6 +19,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { ChevronDown, FileText } from "lucide-react";
+import FormattedText from "@/components/FormattedText";
 
 interface Props {
   /** The consultation this context was gathered for. */
@@ -64,9 +65,10 @@ export default function ContextSummaryPanel({ recordingId }: Props) {
           <ChevronDown className="h-4 w-4 ml-auto transition-transform group-open:rotate-180" />
         </summary>
         <div className="px-4 pb-4">
-          <p className="text-sm whitespace-pre-wrap leading-relaxed text-foreground">
-            {summary}
-          </p>
+          <FormattedText
+            text={summary}
+            className="text-sm leading-relaxed text-foreground space-y-1"
+          />
           <p className="mt-3 text-xs text-muted-foreground">
             Generated from the documents uploaded before this consultation. It was not
             used to write the letter and has not been checked against the originals —
