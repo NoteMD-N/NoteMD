@@ -1,8 +1,48 @@
 # NoteMD — UK GDPR status and gap analysis
 
-**Last updated:** 19 August 2026
-**Status: technical controls in place; documentation and OpenAI Zero Data
-Retention outstanding — see §3 and §5.**
+**Last updated:** 19 August 2026 · **Revised:** 15 October 2026
+**Status: technical controls in place. The transfer exposure described below is
+CLOSED — all patient data now processes within the EEA or the UK. Outstanding
+items are contractual, not technical — see §3 and §5.**
+
+> **Reading this document in October 2026.** Sections 1 and 2 describe the
+> position as it stood in August, when patient data was sent to processors in
+> the United States. That is no longer the case and the history is retained
+> deliberately, because a DPIA reviewer is entitled to see what changed and
+> when. The current position is summarised immediately below.
+
+## 0. Current position (15 October 2026)
+
+| Processing | Processor | Location | Verified |
+|---|---|---|---|
+| Live transcription — primary | AssemblyAI | EU data zone | 14 Oct 2026 |
+| Live transcription — fallback | Deepgram | `eu-central-1` Frankfurt | 14 Oct 2026 |
+| Enhanced dictation | Azure OpenAI | France Central | 5 Oct 2026 |
+| Letter generation | Azure OpenAI | France Central | 5 Oct 2026 |
+| Context document summarisation | Azure OpenAI | France Central | 9 Oct 2026 |
+| Email delivery | Azure Communication Services | United Kingdom | 29 Sept 2026 |
+| Database, storage, auth, functions | Supabase | `eu-west-1` Ireland | — |
+
+**No patient data leaves the EEA or the UK.** OpenAI, Resend, Google Cloud and
+Hugging Face have all been removed from the estate. Residency is verified from
+each provider's own response headers or by opening a real session, and for the
+two live-transcription vendors it is additionally enforced in the browser by
+Content Security Policy — a misconfiguration produces a refused connection
+rather than a silent export.
+
+**France Central, not UK.** The client's preference was a UK region; UK South
+does not host the required models. France is in the EEA and the UK recognises
+the EEA as adequate, so the transfer is lawful — but it is a departure from the
+UK-only position in the original specification and must be recorded in the DPIA
+as a decision rather than assumed. The pilot Trust should be asked early whether
+it has a UK-only requirement.
+
+**Outstanding, and all contractual rather than technical:** a signed DPA with
+AssemblyAI and written confirmation of their training-exclusion and retention
+position; confirmation of Render's region; and DPO sign-off on the lawful basis,
+the Article 9 condition and the France Central decision.
+
+---
 
 This document is deliberately blunt. NoteMD processes **special category data**
 (health data, UK GDPR Art. 9) about identifiable patients. Getting this wrong is
@@ -60,9 +100,11 @@ individual trust if any of them mandate UK-only rather than UK/EEA.
 |---|---|---|---|
 | Supabase (Postgres + storage) | **All patient data at rest** — transcripts, letters, patient identifiers, audio | `eu-west-1` (Ireland) | **EU — compliant** |
 | Supabase edge functions | Transient processing only, no persistence | Co-located with project | EU |
-| OpenAI | Audio + transcripts in transit; retained up to 30 days unless ZDR granted | Global by default | **Action: move to an EU-resident project** |
-| Deepgram | Consultation/standard-engine audio in transit | **`api.eu.deepgram.com` → eu-central-1 (Frankfurt)** | **EU — VERIFIED 24 Aug 2026** (HTTP 200, 286ms) |
-| Resend | Letters and transcripts sent by email | Check account region | Action: switch to EU region |
+| ~~OpenAI~~ | ~~Audio + transcripts in transit~~ | ~~Global~~ | **REMOVED 5 Oct 2026** — replaced by Azure OpenAI, France Central |
+| Azure OpenAI | Dictation audio, transcripts, patient name, context documents | France Central | **EEA — VERIFIED** from the `x-ms-region` response header |
+| AssemblyAI | Consultation and dictation audio in transit (primary) | EU data zone | **EEA — VERIFIED 14 Oct 2026**, session opened |
+| Deepgram | Consultation and dictation audio in transit (fallback) | **`api.eu.deepgram.com` → eu-central-1 (Frankfurt)** | **EEA — VERIFIED 14 Oct 2026** |
+| ~~Resend~~ | ~~Letters and transcripts sent by email~~ | ~~Unconfirmed~~ | **REMOVED** — replaced by Azure Communication Services, UK |
 | Render | Static frontend bundle only — **no patient data at rest** | Check service region | Low priority; no PHI at rest there |
 | MedASR (Cloud Run) | Fallback engine only, currently unused | **`us-east4` (Virginia)**, image in `us-central1` (Iowa) | **Action: redeploy to EU, or delete** — see `medasr-service/deploy-eu.sh` |
 

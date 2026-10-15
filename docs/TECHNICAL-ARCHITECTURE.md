@@ -1,6 +1,6 @@
 # NoteMD — Technical Architecture & Data Protection Evidence
 
-**Prepared:** 26 August 2026
+**Prepared:** 26 August 2026 · **Revised:** 15 October 2026
 **Purpose:** Evidence pack for DPIA, DSPT, DTAC and DCB0129 clinical safety work.
 **Scope:** Production configuration as committed. Items marked **(B)** are stated
 from configuration and need confirming against the live dashboards.
@@ -31,12 +31,23 @@ from configuration and need confirming against the live dashboards.
 | Backend/API | Supabase Edge Functions (Deno), 11 functions | `eu-west-1` Ireland |
 | Database | Supabase PostgreSQL 15 | `eu-west-1` Ireland |
 | Audio storage | Supabase Storage, private bucket `audio-recordings` | `eu-west-1` Ireland |
-| Real-time transcription | Deepgram streaming API | `eu-central-1` Frankfurt **(A — verified)** |
-| Batch transcription | OpenAI `gpt-4o-transcribe` | Global **(C — EU pending)** |
-| Letter generation | OpenAI `gpt-4o` / `gpt-4o-mini` | Global **(C — EU pending)** |
-| Email delivery | Resend | **(B — region to confirm)** |
-| Billing | Stripe | Global |
-| Legacy ASR (unused) | Google Cloud Run + Hugging Face model | `us-east4` Virginia **(C — decommission)** |
+| Context document storage | Supabase Storage, private bucket `context-documents` | `eu-west-1` Ireland **(A — verified)** |
+| Real-time transcription — primary | AssemblyAI `universal-3-5-pro`, EU data zone | `streaming.eu.assemblyai.com` **(A — verified 14 Oct)** |
+| Real-time transcription — fallback | Deepgram `nova-3` | `eu-central-1` Frankfurt **(A — verified 14 Oct)** |
+| Enhanced dictation transcription | Azure OpenAI `gpt-4o-transcribe` | **France Central (A — verified)** |
+| Letter generation | Azure OpenAI `gpt-4o` | **France Central (A — verified)** |
+| Context document summarisation | Azure OpenAI `gpt-4o` (same deployment) | **France Central (A — verified)** |
+| Email delivery | Azure Communication Services | **United Kingdom (A — verified)** |
+| Billing | Stripe | Global — no patient data |
+
+**All patient data now processes within the EEA or the UK.** The August version
+of this document recorded OpenAI's global endpoint as the one route out and the
+highest item on the risk register; it was replaced on 5 October 2026. The legacy
+Google Cloud ASR service has been decommissioned.
+
+Regions marked verified were read from the **provider's own response headers**
+(`x-ms-region` for Azure) or confirmed by opening a real session against the
+endpoint, not inferred from configuration.
 
 ### 1.2 Primary data flow — consultation
 
@@ -47,12 +58,18 @@ Clinician browser
   |
   |-- (2) Microphone capture (local, in memory)
   |
-  |-- (3) Request streaming token --> Edge Fn deepgram-token (eu-west-1)
-  |                                     returns short-lived key + EU endpoint
+  |-- (0) Optional: consultation context (see 1.5)
   |
-  |-- (4) Audio stream -------------> Deepgram wss api.eu.deepgram.com
-  |         (direct browser -> vendor)  (eu-central-1 Frankfurt)
+  |-- (3) Request session -----------> Edge Fn streaming-session (eu-west-1)
+  |                                     returns a short-lived credential, the
+  |                                     complete EU endpoint URL, and a second
+  |                                     descriptor for the fallback vendor
+  |
+  |-- (4) Audio stream -------------> AssemblyAI wss streaming.eu.assemblyai.com
+  |         (direct browser -> vendor)  (EU data zone)
   |                                     <- interim + final transcript
+  |                                     falls back to Deepgram (eu-central-1)
+  |                                     if the session will not open
   |
   |-- (5) Transcript autosave ------> Supabase Postgres (eu-west-1)
   |         every ~15s, draft status
@@ -62,22 +79,55 @@ Clinician browser
   |-- (7) Generate letter ----------> Edge Fn generate-letter (eu-west-1)
   |         audio uploaded to Supabase Storage (eu-west-1)
   |                                     |
-  |                                     |-- transcript + patient identifiers
-  |                                     |     -> OpenAI api.openai.com (GLOBAL)
+  |                                     |-- transcript + patient name
+  |                                     |     (NHS number is tokenised)
+  |                                     |     -> Azure OpenAI notemd-eu
+  |                                     |        (France Central)
   |                                     |     <- generated letter
   |                                     |
   |                                     |-- letter persisted -> Postgres (eu-west-1)
   |
   |-- (8) Letter displayed to clinician
   |
-  |-- (9) Optional: email ----------> Edge Fn send-letter-email -> Resend
+  |-- (9) Optional: email ----------> Edge Fn send-letter-email
+  |                                     -> Azure Communication Services (UK)
 ```
 
 ### 1.3 Primary data flow — dictation (Enhanced engine)
 
-Deepgram is **not** used. Audio is captured in ~10s segments, each uploaded to
-Supabase Storage and transcribed by OpenAI, with text appended to the on-screen
-transcript. Letter generation then proceeds as step (7) above.
+No streaming vendor is used. Audio is captured in segments, each uploaded to
+Supabase Storage and transcribed by Azure OpenAI, with text appended to the
+on-screen transcript. Letter generation then proceeds as step (7) above.
+
+Segments are cut **at natural pauses** rather than on a fixed clock, with a ten
+second ceiling. Fixed-interval cutting sent the model long silent tails to
+account for, and transcription models of this family produce plausible invented
+text from silence rather than returning nothing — which concentrated
+fabrications at the end of recordings, where the tail was longest.
+
+Three further controls apply to this path and are covered in the clinical
+safety section: microphone level monitoring with an on-screen warning, a
+silence gate that declines to send segments containing no speech, and
+server-side rejection of transcription output bearing the marks of having been
+generated from nothing.
+
+### 1.5 Consultation context (added 9 October 2026)
+
+Background a clinician assembles before a consultation — typed or dictated
+notes, and uploaded documents such as previous clinic letters.
+
+Digital PDFs have their text extracted **in the browser**; the document never
+leaves the device as an image. Scanned PDFs have their pages rendered locally
+and read by the same Azure OpenAI deployment used for letters, so optical
+character recognition introduces **no additional sub-processor**.
+
+Uploaded documents are the most directly identifying data in the system and
+follow the **audio** retention period rather than the transcript one. The
+resulting summary is reference material for the clinician; it informs letter
+generation only when the clinician explicitly opts in, which is off by default
+and recorded against each letter in the audit trail.
+
+See `evidence/consultation-context.md`.
 
 ### 1.4 Transcript integrity control
 
@@ -118,22 +168,25 @@ mode/engine combinations.)**
 | Provider | Region | Evidence |
 |---|---|---|
 | **Supabase** (DB, storage, auth, functions) | `eu-west-1` Ireland | Project configuration **(A)** |
-| **Deepgram** | `eu-central-1` Frankfurt | In-app check returned HTTP 200 from `api.eu.deepgram.com`, 24 Aug 2026 **(A)** |
+| **AssemblyAI** | EU data zone | In-app check opened a session against `streaming.eu.assemblyai.com`, 14 Oct 2026 **(A)** |
+| **Deepgram** | `eu-central-1` Frankfurt | In-app check opened a session against `api.eu.deepgram.com`, 14 Oct 2026 **(A)** |
 
 ### 3.2 Outstanding
 
 | Provider | Current | Required action |
 |---|---|---|
-| **OpenAI** | Global (`api.openai.com`) | **(D)** EU-resident project + Zero Data Retention. Application already supports this via `OPENAI_API_BASE` — one environment variable once the account is enabled. |
-| **Resend** | Unconfirmed | **(D)** Switch to EU region. Letters/transcripts are emailed, so this carries patient data. |
+| **Azure OpenAI** | France Central | **(A)** Verified from the `x-ms-region` response header for both the transcription and letter deployments, 5 Oct 2026. |
+| **Azure Communication Services** | United Kingdom | **(A)** Resource data location UK; delivery verified with SPF, DKIM and DMARC alignment. |
 | **Render** | Unconfirmed | **(B)** Static frontend only — **no patient data at rest**. Move to Frankfurt for tidiness. |
 | **MedASR / Cloud Run** | `us-east4` Virginia | **(C)** Currently unused. Recommend deletion; `medasr-service/deploy-eu.sh` provided if it is to be retained in `europe-west2`. |
 | **Google Fonts** | Google CDN (US) | **(C)** See §5.3 — receives clinician IP addresses. |
 
 ### 3.3 Can patient data leave the UK/EEA?
 
-**Yes — currently via OpenAI only.** Transcripts, patient identifiers and (for
-dictation) audio are sent to `api.openai.com`. All storage at rest remains in the
+**No longer.** This section described the position before 5 October 2026, when
+transcripts, patient identifiers and dictation audio were sent to
+`api.openai.com`. They now go to Azure OpenAI in France Central, within the EEA.
+All storage at rest remains in the
 EU. This is the single outstanding residency gap and closes when the EU-resident
 OpenAI project is enabled.
 

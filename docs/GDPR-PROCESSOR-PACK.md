@@ -1,6 +1,6 @@
 # NoteMD — Processor Documentation Pack
 
-**Prepared:** 26 August 2026 · **Prepared by:** Development team
+**Prepared:** 26 August 2026 · **Revised:** 15 October 2026 · **Prepared by:** Development team
 **Purpose:** Supporting artefacts for NoteMD's DPIA, DSPT and DTAC submissions.
 
 These are the three documents a processor is normally expected to supply to a
@@ -40,27 +40,43 @@ be notified about when it changes.*
 
 | # | Sub-processor | Service provided | Data categories processed | Processing location | Transfer safeguard | Retention by sub-processor |
 |---|---|---|---|---|---|---|
-| 1 | **Supabase** (Supabase Inc.) | Database, file storage, authentication, serverless functions | Patient audio, transcripts, generated letters, patient identifiers, clinician account data | `eu-west-1` — Ireland | Within EEA; no transfer mechanism required | For the life of the account; audio auto-deleted at 30 days |
-| 2 | **Deepgram** (Deepgram Inc.) | Real-time speech-to-text for consultations | Consultation audio only — no patient identifiers | `eu-central-1` — Frankfurt | Within EEA. **Confirm account retention setting in writing** | To be confirmed with vendor |
-| 3 | **OpenAI** (OpenAI, L.L.C.) | Dictation transcription and clinical letter generation | Dictation audio, consultation transcripts, patient name and NHS number, template prompts | **Global — currently outside the EEA** | DPA incorporating SCCs + UK Addendum. **EU-resident project and Zero Data Retention pending** | Up to 30 days for abuse monitoring unless ZDR enabled. Not used for model training. |
-| 4 | **Resend** (Resend Inc.) | Transactional email delivery of letters and transcripts | Generated letters, transcripts, patient identifiers, recipient addresses | **To be confirmed** | DPA in vendor terms | Vendor policy |
-| 5 | **Render** (Render Services Inc.) | Static frontend hosting | **No patient data.** Serves the application bundle only. Access logs may contain IP addresses. | To be confirmed | DPA in vendor terms | Platform default |
-| 6 | **Stripe** (Stripe, Inc.) | Subscription billing | **No patient data.** Clinician name, email, payment details — card data goes browser-to-Stripe and never touches NoteMD systems. | Global | DPA + SCCs | Stripe policy |
-| 7 | **Google Cloud Platform** | Legacy speech recognition service — **currently receives no traffic** | **None.** Deployed but not called by the application. | `us-east4` — Virginia | n/a while unused | n/a — **recommend decommissioning** |
+| 1 | **Supabase** (Supabase Inc.) | Database, file storage, authentication, serverless functions | Patient audio, transcripts, generated letters, uploaded context documents, patient identifiers, clinician account data | `eu-west-1` — Ireland | Within EEA; no transfer mechanism required | For the life of the account; audio and context documents auto-deleted at the configured retention period (default 30 days) |
+| 2 | **AssemblyAI** (AssemblyAI, Inc.) | Real-time speech-to-text — **primary engine** for consultations and standard dictation | Consultation audio only — no patient identifiers transmitted | EU Data Zone — `streaming.eu.assemblyai.com`; processed in EU AWS regions only | Within EEA. Audio processed in the European data zone is excluded from model training under vendor policy | Vendor policy — **written confirmation outstanding** |
+| 3 | **Deepgram** (Deepgram Inc.) | Real-time speech-to-text — **automatic fallback** if AssemblyAI cannot open a session | Consultation audio only — no patient identifiers transmitted | `eu-central-1` — Frankfurt | Within EEA. `mip_opt_out=true` sent on every request, excluding audio from retention and model training | Not retained; opt-out applied per request and enforced in code |
+| 4 | **Microsoft Azure OpenAI** (Microsoft Ireland Operations Ltd.) | Enhanced dictation transcription, clinical letter generation, context document summarisation | Dictation audio, consultation transcripts, patient name, uploaded context documents and page images, template prompts | **France Central** — resource `notemd-eu` | Within EEA; no transfer mechanism required | Azure OpenAI abuse-monitoring policy; not used for model training |
+| 5 | **Microsoft Azure Communication Services** (Microsoft Ireland Operations Ltd.) | Transactional email delivery of letters and transcripts | Generated letters, transcripts, patient identifiers, recipient addresses | **United Kingdom** — resource data location | Within UK | Vendor policy |
+| 6 | **Render** (Render Services Inc.) | Static frontend hosting | **No patient data.** Serves the application bundle only. Access logs may contain IP addresses. | To be confirmed | DPA in vendor terms | Platform default |
+| 7 | **Stripe** (Stripe, Inc.) | Subscription billing | **No patient data.** Clinician name, email, payment details — card data goes browser-to-Stripe and never touches NoteMD systems. | Global | DPA + SCCs | Stripe policy |
 | 8 | **Valoco / development contractor** | Application development and maintenance | Administrative access to production infrastructure; may incidentally view clinical data during support | United Kingdom | Contract between NoteMD and contractor | No separate copies retained |
 
 ### Notes for the controller
 
-- **Entry 3 (OpenAI) is the only route by which patient data leaves the EEA.**
-  All storage at rest is in the EEA.
-- **Entry 7** is deployed but idle. Deleting it removes a US processor from the
-  estate entirely.
+- **No patient data now leaves the EEA or the UK.** This is the material change
+  since the August version of this pack, where OpenAI's global endpoint was the
+  one route out and was listed as the highest risk on the register. Transcription,
+  letter generation and email all now process within the EEA or the UK, and every
+  location in the table above has been verified from the provider's own response
+  headers rather than from configuration — see `evidence/azure-openai-cutover.md`
+  and `evidence/assemblyai-residency.md`.
+- **Entries 2 and 3 are enforced in the browser, not only on the server.** The
+  Content Security Policy names each vendor's EU host and omits their global
+  ones, so a misconfiguration pointing at a non-EU endpoint results in a refused
+  connection rather than audio quietly leaving the EEA. This matters most for
+  AssemblyAI, whose default endpoint edge-routes to the nearest region including
+  the United States.
+- **Entry 4 covers three distinct uses** of one resource: transcription, letter
+  generation, and summarising uploaded documents. They use different deployments
+  on the same resource and are listed together because the processor, location
+  and safeguard are identical.
 - **Entry 8** is included deliberately. A development contractor with production
   access is a sub-processor and reviewers expect to see it listed, even though it
   is often omitted.
-- **Hugging Face is not a sub-processor.** The `google/medasr` model is fetched
-  as a one-way download of model weights during container build for entry 7. No
-  personal data has ever been transmitted to Hugging Face.
+- **OpenAI, Resend, Google Cloud Platform and Hugging Face are no longer
+  sub-processors.** OpenAI was replaced by entry 4 on 5 October 2026; Resend by
+  entry 5; the Google Cloud speech service has been decommissioned. Hugging Face
+  was never sent personal data — it supplied model weights to that service during
+  container build. Controllers notified of the August list should be told these
+  four have been removed and entries 2, 4 and 5 added.
 - **No analytics, telemetry or error-reporting service is in use** — verified
   against the application's dependencies.
 
@@ -99,8 +115,13 @@ Patients; clinicians; medical secretaries with delegated access; letter recipien
 
 | Recipient | Country | Mechanism | Status |
 |---|---|---|---|
-| OpenAI | United States | SCCs + UK International Data Transfer Addendum, within the vendor DPA | **Active — transfer risk assessment outstanding** |
 | Stripe | United States | SCCs + UK Addendum | Active — no patient data |
+| Render | To be confirmed | DPA in vendor terms | Active — no patient data |
+
+**No restricted transfer of patient data currently takes place.** Transcription,
+letter generation, document summarisation and email all process within the EEA
+or the UK. The only sub-processors outside the UK/EEA are Stripe and Render,
+neither of which receives patient data.
 | Google Cloud (idle) | United States | SCCs + UK Addendum | No data flowing |
 
 All other processing takes place within the EEA.
@@ -205,7 +226,7 @@ Declared openly, as a reviewer will find them:
 
 | # | Limitation | Impact |
 |---|---|---|
-| 1 | Patient data is transmitted to OpenAI outside the EEA and may be retained up to 30 days | **Highest.** Resolved by the EU-resident project and Zero Data Retention |
+| 1 | ~~Patient data is transmitted to OpenAI outside the EEA and may be retained up to 30 days~~ | **CLOSED, 5 October 2026.** Replaced by Azure OpenAI in France Central; verified from the provider's own `x-ms-region` response header |
 | 2 | No per-patient deletion | Erasure requests need manual handling |
 | 3 | No multi-factor authentication | Will be queried for special category data |
 | 4 | Audit trail does not yet cover logins, record access or letter generation | Structure exists; event coverage is limited |
