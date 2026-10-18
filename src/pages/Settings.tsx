@@ -716,7 +716,14 @@ const Settings = () => {
               erase patient records, so this is hidden from them. */}
           {!isSecretary && <PatientDataRequest />}
 
-          {/* Data residency self-check */}
+          {/* Data residency self-check — administrators only.
+              It names the vendors, models and deployments behind each path,
+              which the client regards as proprietary and which is also a map
+              of the estate's external dependencies. The real control is in
+              the function, which refuses a non-admin caller; hiding it here
+              is courtesy, since anyone with a session could otherwise call
+              the endpoint directly. */}
+          {profile?.role === "admin" && (
           <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>
               <CardTitle>Data residency check</CardTitle>
@@ -850,6 +857,7 @@ const Settings = () => {
               )}
             </CardContent>
           </Card>
+          )}
 
           <Card className="rounded-2xl border-border/60 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
             <CardHeader>

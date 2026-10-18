@@ -420,6 +420,29 @@ serve(async (req) => {
       });
     }
 
+    // Administrators only.
+    //
+    // This reports which vendors, models and deployments serve each path. The
+    // client regards that as proprietary, and it is also a map of the
+    // estate's external dependencies — useful to an attacker deciding where
+    // to look. Hiding the panel in the interface would not be a control: the
+    // function is callable directly by anyone with a session, so the check
+    // belongs here. The panel is hidden too, but as courtesy rather than
+    // security.
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (profile?.role !== "admin") {
+      console.warn(`[diagnostics] refused for non-admin user ${user.id}`);
+      return new Response(JSON.stringify({ error: "Not authorised" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const apiKey = Deno.env.get("DEEPGRAM_API_KEY");
     const configuredBase = Deno.env.get("DEEPGRAM_API_BASE");
     const configuredHost = resolveStreamingHost(configuredBase);

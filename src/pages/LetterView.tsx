@@ -128,6 +128,30 @@ const LetterView = () => {
       });
   }, [id, navigate]);
 
+  /**
+   * Whether the letter on screen differs from the one that would be sent.
+   *
+   * Emailing sends the saved row, not the textarea. A clinician who edits
+   * after saving and then emails would send the previous version while
+   * looking at the new one — the gap is invisible and the recipient gets a
+   * letter the clinician never approved.
+   */
+  const hasUnsavedChanges = editedContent !== (letter?.letter_content ?? "");
+
+  /**
+   * Email becomes available only once the letter has been reviewed and saved.
+   *
+   * The server refuses an unreviewed letter regardless; this stops the
+   * clinician reaching a refusal, and closes the edited-after-saving case
+   * that the status check alone does not cover.
+   */
+  const canEmail = letter?.status !== "draft" && !hasUnsavedChanges;
+  const emailBlockedReason = hasUnsavedChanges
+    ? "Save your changes before emailing — the saved letter is what gets sent."
+    : letter?.status === "draft"
+    ? "Review the letter and save it before emailing."
+    : "";
+
   const handleSave = async () => {
     if (!letter) return;
     setSaving(true);
@@ -355,7 +379,8 @@ const LetterView = () => {
               onClick={handleSendEmail}
               variant="outline"
               size="sm"
-              disabled={sending}
+              disabled={sending || !canEmail}
+              title={emailBlockedReason || undefined}
               className="gap-2"
             >
               {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
@@ -367,6 +392,11 @@ const LetterView = () => {
             </Button>
           </div>
         </div>
+        {!canEmail && emailBlockedReason && (
+          <p className="text-xs text-muted-foreground mt-2 sm:text-right">
+            {emailBlockedReason}
+          </p>
+        )}
 
         {/* Audio playback */}
         {audioUrl && (

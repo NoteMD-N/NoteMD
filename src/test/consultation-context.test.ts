@@ -199,3 +199,65 @@ describe("the summariser handles its own data carefully", () => {
     expect(read("supabase/functions/_shared/rate-limit.ts")).toMatch(/"summarise-context"/);
   });
 });
+
+describe("the diagnostic is restricted to administrators", () => {
+  const fn = () => read("supabase/functions/diagnostics-transcription/index.ts");
+
+  it("refuses a caller who is not an admin", () => {
+    // It reports which vendors, models and deployments serve each path. The
+    // client regards that as proprietary, and it is also a map of the
+    // estate's external dependencies.
+    const src = fn();
+    expect(src).toMatch(/profile\?\.role !== "admin"/);
+    expect(src).toMatch(/status: 403/);
+  });
+
+  it("checks the role before probing any vendor", () => {
+    // Otherwise a refused caller still causes requests to every provider,
+    // and the timing alone reveals how many there are.
+    const src = fn();
+    expect(src.indexOf('role !== "admin"')).toBeLessThan(src.indexOf("resolveVendors(("));
+  });
+
+  it("hides the panel too, but does not rely on that", () => {
+    // The function is callable directly by anyone holding a session, so the
+    // interface check is courtesy and the server check is the control.
+    expect(read("src/pages/Settings.tsx")).toMatch(/profile\?\.role === "admin" &&/);
+  });
+});
+
+describe("context stays reachable on the letter page", () => {
+  const panel = () => read("src/components/ContextSummaryPanel.tsx");
+
+  it("appears when there are notes, a summary, or both", () => {
+    // It previously required a document summary, so a clinician who typed
+    // notes without uploading anything saw nothing and reasonably concluded
+    // the context had been lost.
+    expect(panel()).toMatch(/if \(!summary && !notes\) return null;/);
+  });
+
+  it("does not present a pending or failed summary as finished", () => {
+    expect(panel()).toMatch(/summary_status === "ready"/);
+  });
+});
+
+describe("emailing is gated on a reviewed, saved letter", () => {
+  const view = () => read("src/pages/LetterView.tsx");
+
+  it("blocks sending while there are unsaved edits", () => {
+    // Emailing sends the saved row, not the textarea. Editing after saving
+    // and then emailing would send the previous version while the clinician
+    // looks at the new one.
+    const src = view();
+    expect(src).toMatch(/const hasUnsavedChanges = editedContent !== \(letter\?\.letter_content \?\? ""\)/);
+    expect(src).toMatch(/disabled=\{sending \|\| !canEmail\}/);
+  });
+
+  it("blocks sending a letter still in draft", () => {
+    expect(view()).toMatch(/letter\?\.status !== "draft"/);
+  });
+
+  it("says why, rather than showing a dead button", () => {
+    expect(view()).toMatch(/emailBlockedReason/);
+  });
+});
