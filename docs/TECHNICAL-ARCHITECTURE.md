@@ -178,19 +178,19 @@ mode/engine combinations.)**
 | **Azure OpenAI** | France Central | **(A)** Verified from the `x-ms-region` response header for both the transcription and letter deployments, 5 Oct 2026. |
 | **Azure Communication Services** | United Kingdom | **(A)** Resource data location UK; delivery verified with SPF, DKIM and DMARC alignment. |
 | **Render** | Unconfirmed | **(B)** Static frontend only — **no patient data at rest**. Move to Frankfurt for tidiness. |
-| **MedASR / Cloud Run** | `us-east4` Virginia | **(C)** Currently unused. Recommend deletion; `medasr-service/deploy-eu.sh` provided if it is to be retained in `europe-west2`. |
+| ~~**MedASR / Cloud Run**~~ | ~~`us-east4` Virginia~~ | **DECOMMISSIONED.** Removed from the estate, along with the Hugging Face model dependency it carried. |
 | **Google Fonts** | Google CDN (US) | **(C)** See §5.3 — receives clinician IP addresses. |
 
 ### 3.3 Can patient data leave the UK/EEA?
 
-**No longer.** This section described the position before 5 October 2026, when
-transcripts, patient identifiers and dictation audio were sent to
-`api.openai.com`. They now go to Azure OpenAI in France Central, within the EEA.
-All storage at rest remains in the
-EU. This is the single outstanding residency gap and closes when the EU-resident
-OpenAI project is enabled.
+**No.** Until 5 October 2026 transcripts, patient identifiers and dictation
+audio were sent to a provider outside the EEA. They now go to Azure OpenAI in
+**France Central**, and live transcription to AssemblyAI's **EU data zone** or
+Deepgram's **Frankfurt** endpoint. Email delivery is in the **United Kingdom**.
+All storage at rest remains in **Ireland**.
 
-Hugging Face receives **no patient data** — see §8.4.
+There is no longer an outstanding residency gap. The sub-processors outside the
+UK/EEA are Stripe and Render, and neither receives patient data.
 
 ---
 
@@ -284,40 +284,55 @@ instance are (C)** and are the strongest single addition for DTAC evidence.
 
 ## 8. Vendor detail
 
-### 8.1 OpenAI
-- **Endpoints:** `/v1/audio/transcriptions`, `/v1/chat/completions`
-- **Models:** `gpt-4o-transcribe` (transcription), `gpt-4o` and `gpt-4o-mini` (letters)
-- **Data sent:** dictation audio; consultation transcripts; patient name and NHS
-  number where entered; template prompts
-- **Retention:** default up to 30 days for abuse monitoring. **API data is not
-  used for model training by default.**
-- **Required:** Zero Data Retention + EU-resident project **(D)**
-- **Readiness:** `OPENAI_API_BASE` already externalised — no code change needed **(A)**
+### 8.1 Microsoft Azure OpenAI — enhanced dictation, letters, document summaries
+- **Resource:** `notemd-eu`, **France Central**
+- **Endpoints:** `/openai/deployments/{deployment}/audio/transcriptions`, `/chat/completions`
+- **Deployments:** `gpt-transcribe` (transcription), `gpt-4o` (letters and
+  document summaries)
+- **Data sent:** dictation audio; consultation transcripts; patient name;
+  uploaded context documents and rendered page images; template prompts.
+  **The NHS number is tokenised and never sent.**
+- **Region verified** from the provider's own `x-ms-region` response header,
+  not from configuration.
+- **No biasing prompt is sent.** A clinical vocabulary prompt was removed on
+  21 October 2026: these models return the prompt as dictation when there is
+  no speech, so a prompt listing drug names was the mechanism by which drug
+  names were fabricated.
 
-### 8.2 Deepgram
-- **Product:** real-time streaming API (`/v1/listen`), model `nova-2-medical`, `en-GB`
+### 8.2 AssemblyAI — live transcription, primary
+- **Product:** streaming API v3, model `universal-3-5-pro`, pinned explicitly
+- **Endpoint:** `wss://streaming.eu.assemblyai.com` — **EU data zone**
+- **Data sent:** consultation audio only. No patient identifiers.
+- **Medical mode:** off, by the client's decision after testing
+- **Training exclusion:** a property of the European data zone under vendor
+  policy. There is **no per-request parameter** — unlike Deepgram below. We
+  enforce it by refusing to issue a session for any other host.
+- **Authentication:** short-lived token minted server-side, 120-second
+  redemption window. No long-lived key reaches the browser.
+- **Outstanding (D):** signed DPA and written confirmation of the training and
+  retention position.
+
+### 8.3 Deepgram — live transcription, automatic fallback
+- **Product:** real-time streaming API (`/v1/listen`), model `nova-3`, `en-GB`
 - **Endpoint:** `wss://api.eu.deepgram.com` — verified `eu-central-1` **(A)**
 - **Data sent:** consultation audio only. No patient identifiers.
-- **Retention:** **(D — obtain written confirmation of the account's retention setting)**
+- **Training exclusion:** `mip_opt_out=true` on **every** request, enforced in
+  code; the session endpoint refuses to issue a URL without it.
+- **Used only** when AssemblyAI cannot open a session at the start of a
+  consultation. Mid-consultation switching is deliberately not attempted.
 - **Note:** the credential is accepted by the global endpoint too, so residency
-  is enforced by configuration rather than by the key. An EU-scoped key would
-  make US routing impossible even by misconfiguration. **(D — hardening)**
+  is enforced by configuration and by the browser's Content Security Policy
+  rather than by the key. An EU-scoped key would make non-EU routing
+  impossible even by misconfiguration. **(D — hardening)**
 
-### 8.3 Resend
-- **Data sent:** generated letters and/or transcripts, patient identifiers, recipient addresses
-- **Region:** **(D — confirm and switch to EU)**
-
-### 8.4 Hugging Face — *no longer in the data path*
-Directly answering the question: the Hugging Face `transformers` library and the
-`google/medasr` model are used **only** by the legacy MedASR service. That
-service:
-- is **not called** by the application (OpenAI replaced it as the accurate engine);
-- downloads the model **at container build/startup** — a one-way fetch of model
-  weights;
-- **has never transmitted patient data to Hugging Face.**
-
-It remains *deployed* in `us-east4`. **Recommendation: delete it (C).** That
-removes a US processor and the Hugging Face dependency from the estate entirely.
+### 8.4 Microsoft Azure Communication Services — email
+- **Data sent:** generated letters and/or transcripts, patient identifiers,
+  recipient addresses
+- **Region:** **United Kingdom** (resource data location)
+- **Delivery:** verified with SPF, DKIM and DMARC alignment from
+  `mail.notemd.co.uk`
+- **Note:** Microsoft has announced the retirement of ACS Email as a product in
+  September 2028. Not urgent, but it should be on the roadmap.
 
 ### 8.5 Stripe
 Clinician name, email and payment details. **No patient data.** Card details go
@@ -434,33 +449,64 @@ affect production data. **Recommend a separate staging project (C).**
 
 ## 15. Summary of outstanding actions
 
+*Revised 21 October 2026. The August version of this section listed MFA,
+password reset, a staging environment, the expanded audit trail, cross-user
+testing and per-patient handling as outstanding development work. All are
+implemented; they are recorded as completed below rather than deleted, so the
+history of the assurance work is legible.*
+
+### Completed since August 2026
+
+| | Evidence |
+|---|---|
+| Patient data no longer leaves the EEA or the UK | `evidence/azure-openai-cutover.md`, `evidence/assemblyai-residency.md` |
+| Multi-factor authentication (TOTP), enforced at the route level | `src/components/TwoFactorSettings.tsx`, `MfaChallenge.tsx`, `ProtectedRoute.tsx` |
+| Password reset flow | `src/pages/ResetPassword.tsx`; audited |
+| Separate staging environment with synthetic data | `src/lib/environment.ts`; local development targets staging by default |
+| Expanded audit trail — 38 distinct actions | `20260916090000_expanded_audit_trail.sql` |
+| Cross-user / IDOR testing against a live database | `evidence/idor-results.md`; 26 integration tests |
+| Per-patient data location and deletion | `20260828120000_per_patient_data_requests.sql` |
+| Privileged profile columns locked against self-assignment | `20260917100000_lock_privileged_profile_columns.sql` |
+| Rate limiting on endpoints that cost money or send mail | `20260917160000_rate_limiting.sql` |
+| Third-party error bodies redacted before logging | `evidence/log-redaction-regression.md` |
+| Backup configuration and a documented restore test | `evidence/backup-configuration.md`, `evidence/recovery-test.md` |
+| Security headers and a strict CSP, verified in production | `evidence/security-headers.md` |
+| MedASR / Cloud Run service decommissioned | Removes a US processor and the Hugging Face dependency |
+
 ### D — for NoteMD/providers (blocking)
-1. **OpenAI Zero Data Retention + EU-resident project.** The only route by which
-   patient data currently leaves the EEA. Has external lead time.
-2. **Resend** — confirm and switch to the EU region.
-3. **Deepgram** — obtain written confirmation of retention; request an EU-scoped key.
-4. **Delete `transcribe-chunk`** in the Supabase dashboard.
-5. **Commission an independent penetration test.**
-6. Retrieve and file dated DPA copies for all sub-processors.
+
+1. **Signed DPA with AssemblyAI**, plus written confirmation of the training
+   and retention position.
+2. **Deepgram** — written confirmation of retention; request an EU-scoped key.
+3. **Commission the independent penetration test** — see `PENTEST-PACK.md`.
+4. Retrieve and file dated DPA copies for all current sub-processors.
+5. **DPO sign-off** on the lawful basis, the Article 9 condition, and the
+   France Central processing decision.
+6. **Confirm the Render hosting region** — see §15.1.
 
 ### C — development work, prioritised
-1. Per-patient data location and deletion (likely DPIA requirement)
-2. Extend the audit trail to logins, record access and letter generation
-3. Delete or relocate the MedASR service (removes a US processor and Hugging Face)
-4. Cross-user/IDOR tests against a live database
-5. Self-host fonts (removes Google as a recipient of clinician IPs)
-6. Password reset flow
-7. MFA
-8. Separate staging environment
-9. Redact third-party error bodies before logging
-10. In-app account deletion
-11. Dependency scanning in CI
 
-### B — verification needed
-Render region; Resend region; Supabase backup plan and window; log retention;
-confirm the audio purge matches the `segments/` prefix.
+1. Retire the superseded `deepgram-token` function, now replaced by
+   `streaming-session`.
+2. Dependency scanning in CI.
+3. Self-host fonts (removes Google as a recipient of clinician IP addresses).
+4. In-app account deletion.
+5. Point-in-time recovery is **not enabled**; the recovery point objective is
+   therefore up to 24 hours. Enabling it is a plan-level decision.
 
----
+### 15.1 Render region — not determinable externally
+
+This has been carried as "to be confirmed" since August and cannot be closed
+from outside the account. The live site is served through Cloudflare, so
+response headers show the **edge** point of presence (London, from a UK
+request) rather than the Render origin region — a distinction worth stating,
+because the header looks like an answer and is not one.
+
+It must be read from **Render Dashboard → the static site → Settings →
+Region**.
+
+Lower stakes than the other entries: Render serves the static bundle only and
+receives no patient data. Its access logs may contain clinician IP addresses.
 
 ## Appendix — headline risks
 

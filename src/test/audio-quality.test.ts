@@ -286,3 +286,58 @@ describe("ending a segment at the pause rather than the clock", () => {
     expect(record).toMatch(/\}, 250\);/);
   });
 });
+
+/**
+ * The biasing prompt was removed on 21 October 2026.
+ *
+ * It listed clinical vocabulary including six drug names, on the theory that
+ * it would help the model recognise them. With no speech to condition on
+ * these models return the prompt as though it had been dictated — so the
+ * names most likely to be fabricated were precisely the ones in the list. A
+ * prompt meant to help with drug names was manufacturing them.
+ */
+describe("no vocabulary is supplied to the transcription model", () => {
+  const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
+  const fns = ["transcribe-audio", "generate-letter"];
+
+  it("sends no prompt field at all", () => {
+    for (const fn of fns) {
+      const src = read(`supabase/functions/${fn}/index.ts`);
+      expect(src, `${fn} still sends a prompt`).not.toMatch(/form\.append\("prompt"/);
+    }
+  });
+
+  it("carries no drug names for the model to echo", () => {
+    for (const fn of fns) {
+      const src = read(`supabase/functions/${fn}/index.ts`);
+      const prompt = /const CLINICAL_PROMPT = ([\s\S]*?);\n/.exec(src)?.[1] ?? "";
+      for (const drug of ["sumatriptan", "amlodipine", "atorvastatin",
+                          "levothyroxine", "salbutamol", "omeprazole"]) {
+        expect(prompt, `${fn} prompt still names ${drug}`).not.toContain(drug);
+      }
+      expect(prompt.replace(/\s|"/g, "")).toBe("");
+    }
+  });
+
+  it("still sends a language hint, which carries no vocabulary", () => {
+    // Not clinical context: it stops short segments being misdetected as
+    // another language, and there is nothing in it to echo back.
+    for (const fn of fns) {
+      expect(read(`supabase/functions/${fn}/index.ts`)).toMatch(/form\.append\("language", "en"\)/);
+    }
+  });
+
+  it("keeps the degenerate-output check, which does not depend on a prompt", () => {
+    // Looping output is still rejected whether or not a prompt was sent.
+    expect(assessTranscript("ok ok ok ok ok ok ok ok ok ok ok ok", "")).toEqual({
+      usable: false, reason: "degenerate",
+    });
+  });
+
+  it("treats an empty prompt as nothing to echo, rather than matching everything", () => {
+    // The guard must not start rejecting real transcripts now that the
+    // prompt it compares against is empty.
+    expect(looksLikePromptEcho("The patient reports exertional chest pain today", "")).toBe(false);
+    expect(assessTranscript("The patient reports exertional chest pain today", "").usable).toBe(true);
+  });
+});

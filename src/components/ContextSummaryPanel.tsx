@@ -24,9 +24,17 @@ import FormattedText from "@/components/FormattedText";
 interface Props {
   /** The consultation this context was gathered for. */
   recordingId: string | null | undefined;
+  /**
+   * Open without a click.
+   *
+   * Used on the letter page, where the clinician is editing against this
+   * material and asked for it to be available as a reference rather than
+   * something to go looking for.
+   */
+  defaultOpen?: boolean;
 }
 
-export default function ContextSummaryPanel({ recordingId }: Props) {
+export default function ContextSummaryPanel({ recordingId, defaultOpen }: Props) {
   const [summary, setSummary] = useState<string | null>(null);
   /**
    * The clinician's own notes.
@@ -69,7 +77,7 @@ export default function ContextSummaryPanel({ recordingId }: Props) {
 
   return (
     <div className="rounded-2xl border border-border/60 bg-muted/30">
-      <details className="group">
+      <details className="group" open={defaultOpen}>
         <summary className="cursor-pointer list-none p-4 flex items-center gap-2 text-sm text-muted-foreground font-heading hover:text-foreground transition-colors">
           <FileText className="h-4 w-4 shrink-0" />
           Consultation context

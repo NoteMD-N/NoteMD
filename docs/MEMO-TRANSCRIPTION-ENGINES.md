@@ -1,5 +1,11 @@
 # Transcription engines — current position and a recommendation
 
+> **Historical record — 5 October 2026.** This memo informed the engine
+> decision and is kept for that reason. It does **not** describe the current
+> configuration: AssemblyAI is now the primary live engine with Deepgram
+> Nova-3 behind it, and enhanced dictation runs `gpt-transcribe`. See
+> `TECHNICAL-ARCHITECTURE.md` for the current position.
+
 **NoteMD · 5 October 2026 · for Mohamed Mustafa**
 
 You asked which version of Deepgram we are using, and whether to replace it

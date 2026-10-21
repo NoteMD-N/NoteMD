@@ -177,7 +177,13 @@ Note also that a DPA existing does not automatically make a processor
 *appropriate* for special category health data at scale. That judgement is the
 DPIA's job (§3.4).
 
-### 3.2 Zero Data Retention with OpenAI
+### 3.2 ~~Zero Data Retention with OpenAI~~ — CLOSED, 5 October 2026
+
+> **No longer applicable.** OpenAI was removed from the estate entirely and
+> replaced by Azure OpenAI in France Central. There is no US transfer to
+> mitigate and no retention exemption to apply for. The original text
+> follows for the record.
+
 **Status: NOT automatic. This remains the main technical blocker.**
 
 This one is genuinely not covered by the DPA. By default OpenAI retains API
@@ -258,7 +264,7 @@ are usually bundled into those same DPAs.
 
 **What genuinely remains outstanding:**
 
-1. **OpenAI Zero Data Retention** (§3.2) — not covered by any DPA, must be
+1. ~~**OpenAI Zero Data Retention** (§3.2)~~ — **CLOSED.** OpenAI removed from the estate; was not covered by any DPA, had to be
    applied for. This is the main technical blocker.
 2. **NoteMD's own documentation** — DPIA, lawful basis, ROPA, Transfer Risk
    Assessments, privacy-notice wording, breach runbook. No vendor supplies

@@ -432,6 +432,11 @@ const LetterView = () => {
           </CardContent>
         </Card>
 
+        {/* Directly beneath the letter it informs. The clinician is editing
+            against this material, so it sits next to the text rather than at
+            the foot of the page, and opens without a click. */}
+        <ContextSummaryPanel recordingId={letter?.recording_id} defaultOpen />
+
         {/* Regenerate with instructions */}
         <Card className="rounded-2xl border-primary/20 shadow-[0_1px_3px_rgba(21,33,52,0.04)]">
           <CardHeader className="pb-3">
@@ -548,8 +553,6 @@ const LetterView = () => {
             transcript it is source material the clinician may want to check
             — and unlike the transcript it did not contribute to the letter
             at all. */}
-        <ContextSummaryPanel recordingId={letter?.recording_id} />
-
         {/* Transcript — last on the page and collapsed by default.
             By the time a letter exists the clinician's task is reviewing and
             editing it, not re-reading what they said. The transcript stays

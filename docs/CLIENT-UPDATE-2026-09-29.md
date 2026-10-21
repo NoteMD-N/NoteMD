@@ -1,5 +1,8 @@
 # NoteMD — pre-pilot technical work, progress update
 
+> **Historical record — 29 September 2026.** Superseded by
+> `PRODUCT-STATUS-2026-10-15.md` and `TECHNICAL-ARCHITECTURE.md`.
+
 29 September 2026
 (Supersedes the draft of 17 September, which was not sent.)
 

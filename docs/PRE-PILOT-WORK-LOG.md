@@ -1,5 +1,10 @@
 # NHS pre-pilot programme — work log
 
+> **Historical record.** A log of the pre-pilot work as it was carried out.
+> Provider and model names mentioned here reflect the position at the time
+> of each entry, not the current configuration. See
+> `TECHNICAL-ARCHITECTURE.md`.
+
 Tracks delivery against the client's ten-point scope of 15 September 2026.
 The first $1,500 is the previously agreed security/assurance milestone; work
 beyond it is recorded here with effort so it can be billed against the agreed

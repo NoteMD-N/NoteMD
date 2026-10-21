@@ -101,11 +101,33 @@ const aiConfig = resolveAiConfig((k) => Deno.env.get(k));
 // ---------------------------------------------------------------------------
 const OPENAI_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
-const CLINICAL_PROMPT =
-  "UK clinical dictation. British English spelling (anaemia, oedema, paediatric, " +
-  "haematology, diarrhoea, orthopaedic). Common terms: NHS, GP, mg, mcg, BD, TDS, QDS, PRN, " +
-  "PO, IV, IM, SC, ECG, MRI, CT, FBC, U&Es, LFTs, CRP, HbA1c, BP, BMI, PMH, ICE, " +
-  "sumatriptan, amlodipine, atorvastatin, levothyroxine, salbutamol, omeprazole.";
+/**
+ * No biasing prompt is sent to the transcription model. Deliberately empty.
+ *
+ * This previously carried a list of clinical vocabulary — British spellings,
+ * abbreviations, and a handful of common drug names — on the theory that it
+ * would improve recognition of medical terms.
+ *
+ * It did the opposite in the way that mattered. These models have nothing to
+ * condition on when there is no speech, and return the prompt itself as though
+ * it had been dictated. The names in that list were therefore the exact names
+ * most likely to appear in a transcript having never been said: a prompt
+ * intended to help with drug names was manufacturing them.
+ *
+ * The client's testing found the current model performs well without any
+ * context, so the audio is now transcribed as an ordinary recording. A general
+ * transcription that misses an unusual drug name is a gap a clinician can see;
+ * a biased one that supplies a plausible wrong drug name is not.
+ *
+ * `language` is still sent. That is not clinical context — it stops short
+ * segments being misdetected as another language — and carries no vocabulary
+ * for the model to echo.
+ *
+ * Kept as a named constant rather than deleted so the reasoning survives, and
+ * so the prompt-echo check below still has something to compare against if a
+ * prompt is ever reintroduced.
+ */
+const CLINICAL_PROMPT = "";
 
 async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<string> {
   if (!aiConfig.apiKey) {
@@ -128,7 +150,6 @@ async function transcribeOpenAI(audioBlob: Blob, audioPath: string): Promise<str
   form.append("file", audioBlob, `audio.${ext}`);
   form.append("model", model);
   form.append("language", "en");
-  form.append("prompt", CLINICAL_PROMPT);
   form.append("response_format", "text");
   // temperature 0 = deterministic; avoids the model "smoothing" clinical detail.
   form.append("temperature", "0");
