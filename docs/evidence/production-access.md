@@ -1,20 +1,62 @@
 # Production access register
 
-Compiled 30 September 2026 from the Supabase Management API and the project
-configuration. Records who can reach production clinical data, by what means.
+Compiled 30 September 2026 from the Supabase Management API.
+**Re-verified 21 October 2026 — both findings below are now closed.**
 
 ## Supabase — production project `mdunhinhsrdrilxcdbvq`
 
 Organisation: **NoteMD** (`syqzkpxolrihfjktiinr`)
 
+### Current state, verified 21 October 2026
+
 | Account | Role | MFA | Access |
 | --- | --- | --- | --- |
-| `abualapass123@yahoo.com` | Owner | **disabled** | Full — database, storage, secrets, backups |
-| `chris@valoco.co` | Administrator | **disabled** | Full — database, storage, secrets, backups |
+| `m.mustafa@notemd.co.uk` | Owner | **enabled** | Full — database, storage, secrets, backups |
+| `NoteMD-N` | Owner | **enabled** | Full — database, storage, secrets, backups |
+| `chris@valoco.co` | Administrator | **enabled** | Full — database, storage, secrets, backups |
 
-Two accounts hold unrestricted access to the production clinical database.
-Supabase organisation roles are not scoped per project, so both also reach the
-staging project.
+Three accounts hold unrestricted access to the production clinical database.
+Supabase organisation roles are not scoped per project, so each also reaches
+the staging project.
+
+**Multi-factor authentication is enabled on every account with access to
+production.** Read from the Supabase Management API rather than from the
+dashboard, so the state is the platform's own and not a screenshot.
+
+---
+
+## Closed findings
+
+Retained rather than deleted: an assurance reviewer is entitled to see what was
+found and that it was fixed, and a register that only ever shows a clean state
+tells them nothing about whether anything is being looked for.
+
+### ~~Finding: no multi-factor authentication on either administrative account~~
+**CLOSED, verified 21 October 2026.**
+
+As recorded on 30 September, the two accounts able to read every patient record
+had no second factor — a single password compromise would have exposed the
+entire dataset, bypassing every other control including Row Level Security,
+since organisation owners read the database directly.
+
+MFA is now enabled on all three accounts.
+
+### ~~Finding: the Owner account is a personal webmail address~~
+**CLOSED, verified 21 October 2026.**
+
+Owner rights were held by a `yahoo.com` address. Account recovery therefore
+depended on a consumer mailbox outside the organisation's control, and there
+was no administrative route in if the individual became unavailable.
+
+That account no longer appears in the organisation. Owner rights are now held
+by `m.mustafa@notemd.co.uk`, on a domain the company controls, and a second
+Owner account exists so access does not depend on one individual.
+
+---
+
+## Original text, 30 September 2026
+
+*Kept for the record. Superseded by the verified state above.*
 
 ### Finding: no multi-factor authentication on either administrative account
 

@@ -32,3 +32,6 @@ supabase/.branches/
 
 # pdf.js worker, copied from node_modules at build time
 public/pdf.worker.min.mjs
+
+# Built evidence packages — regenerate from docs/ rather than committing
+docs/dist/
